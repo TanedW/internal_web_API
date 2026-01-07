@@ -51,10 +51,10 @@ export default async function handler(req) {
           `;
         
         // บันทึก Log การเข้าใช้งาน
-        await saveLoginLog(sql, {
-          userId: updatedUser[0].user_id,
-          provider, ipAddress, userAgent, status: 'SUCCESS'
-        });
+        // await saveLoginLog(sql, {
+        //   userId: updatedUser[0].user_id,
+        //   provider, ipAddress, userAgent, status: 'SUCCESS'
+        // });
 
         return new Response(JSON.stringify(updatedUser[0]), { 
             status: 200, 
@@ -70,7 +70,7 @@ export default async function handler(req) {
           RETURNING *;
         `;
         
-        await saveLoginLog(sql, {
+        await (sql, {
           userId: newUser[0].user_id,
           provider, ipAddress, userAgent, status: 'SUCCESS'
         });
@@ -87,10 +87,10 @@ export default async function handler(req) {
       // Log Failed Attempt
       try {
           const sql = neon(process.env.DATA_BASE_URL);
-          await saveLoginLog(sql, {
-            userId: null,
-            provider, ipAddress, userAgent, status: 'FAILED'
-          });
+          // await saveLoginLog(sql, {
+          //   userId: null,
+          //   provider, ipAddress, userAgent, status: 'FAILED'
+          // });
       } catch (logError) { console.error("Log Error:", logError); }
 
       return new Response(JSON.stringify({ message: 'An error occurred', error: error.message }), { 
