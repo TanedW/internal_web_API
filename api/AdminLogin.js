@@ -106,14 +106,14 @@ export default async function handler(req) {
   });
 }
 
-// Helper Function: บันทึกประวัติการ Login (ควรสร้างตาราง login_logs ไว้ด้วย)
-async function saveLoginLog(sql, { userId, provider, ipAddress, userAgent, status }) {
-    try {
-        await sql`
-            INSERT INTO login_logs (user_id, provider, ip_address, user_agent, status)
-            VALUES (${userId}, ${provider}, ${ipAddress}, ${userAgent}, ${status})
-        `;
-    } catch (e) {
-        console.error("Error saving log:", e);
-    }
-}
+// // Helper Function: บันทึกประวัติการ Login (ควรสร้างตาราง login_logs ไว้ด้วย)
+// async function saveLoginLog(sql, { userId, provider, ipAddress, userAgent, status }) {
+//     try {
+//         await sql`
+//             INSERT INTO login_logs (user_id, provider, ip_address, user_agent, status)
+//             VALUES (${userId}, ${provider}, ${ipAddress}, ${userAgent}, ${status})
+//         `;
+//     } catch (e) {
+//         console.error("Error saving log:", e);
+//     }
+// }
