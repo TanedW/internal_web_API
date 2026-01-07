@@ -33,7 +33,7 @@ export default async function handler(req) {
       provider = body.provider; // รับค่ามาเพื่อบันทึกลง Log ว่า login ด้วยอะไร
       const { first_name, last_name, access_token } = body;
       
-      const sql = neon(process.env.DATABASE_URL);
+      const sql = neon(process.env.DATA_BASE_URL);
 
       // 3. Check existing user
       const existingUser = await sql`SELECT * FROM admin_system WHERE "email" = ${email}`;
@@ -86,7 +86,7 @@ export default async function handler(req) {
 
       // Log Failed Attempt
       try {
-          const sql = neon(process.env.DATABASE_URL);
+          const sql = neon(process.env.DATA_BASE_URL);
           await saveLoginLog(sql, {
             userId: null,
             provider, ipAddress, userAgent, status: 'FAILED'
