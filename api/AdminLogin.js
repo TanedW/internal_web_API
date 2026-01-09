@@ -13,12 +13,12 @@ const corsHeaders = {
 };
 
 
-async function saveLoginLog(sql, { userId, ipAddress, status, email, first_name , last_name}) {
+async function saveLoginLog(sql, { adminId, ipAddress, status, email, first_name , last_name}) {
   try {
-    // หมายเหตุ: ผมเพิ่ม email ลงไปใน log ด้วยเพื่อให้ตรวจสอบง่ายขึ้นกรณี userId เป็น null
+    // หมายเหตุ: ผมเพิ่ม email ลงไปใน log ด้วยเพื่อให้ตรวจสอบง่ายขึ้นกรณี adminId เป็น null
     await sql`
-      INSERT INTO admin_system_logs (admin_id, email, ip_address, status, action_type)
-      VALUES (${userId}, ${email}, ${first_name}, ${last_name}, ${ipAddress}, ${status}, 'ADMIN_LOGIN');
+      INSERT INTO admin_system_logs (admin_id, email, ip_address, status, action_type ,first_name , last_name})
+      VALUES (${adminId}, ${email}, ${ipAddress}, ${status}, 'ADMIN_LOGIN', ${first_name}, ${last_name});
     `;
   } catch (e) {
     // ถ้าบันทึก Log ไม่สำเร็จ ให้แค่แสดง Error แต่ห้ามทำให้ระบบ Login หลักพัง
