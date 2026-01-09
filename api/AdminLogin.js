@@ -39,12 +39,11 @@ export default async function handler(req) {
     const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
     const userAgent = req.headers.get('user-agent') || null;
     
-    let email, provider; 
+    let email; 
     
     try {
       const body = await req.json();
       email = body.email;
-      provider = body.provider; 
       const { first_name, last_name, access_token } = body;
       
       // เชื่อมต่อ Database
@@ -66,9 +65,9 @@ export default async function handler(req) {
         
         // บันทึก Log: Success (Existing User)
         await saveLoginLog(sql, {
-          userId: updatedUser[0].admin_id, // หรือ updatedUser[0].id ขึ้นอยู่กับชื่อ column ในตาราง admin_system
+          adminId: updatedUser[0].admin_id, // หรือ updatedUser[0].id ขึ้นอยู่กับชื่อ column ในตาราง admin_system
           email: email,
-          provider, ipAddress, userAgent, status: 'SUCCESS'
+          first_name, last_name, ipAddress, status: 'SUCCESS'
         });
 
         return new Response(JSON.stringify(updatedUser[0]), { 
