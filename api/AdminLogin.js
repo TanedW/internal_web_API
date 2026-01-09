@@ -17,7 +17,7 @@ async function saveLoginLog(sql, { adminId, ipAddress, status, email, first_name
   try {
     // หมายเหตุ: ผมเพิ่ม email ลงไปใน log ด้วยเพื่อให้ตรวจสอบง่ายขึ้นกรณี adminId เป็น null
     await sql`
-      INSERT INTO admin_system_logs (admin_id, email, ip_address, status, action_type ,first_name , last_name})
+      INSERT INTO admin_system_logs (admin_id, email, ip_address, status, action_type ,first_name , last_name)
       VALUES (${adminId}, ${email}, ${ipAddress}, ${status}, 'ADMIN_LOGIN', ${first_name}, ${last_name});
     `;
   } catch (e) {
