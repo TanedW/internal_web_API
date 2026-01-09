@@ -12,13 +12,23 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-
-async function saveLoginLog(sql, {adminId, ipAddress, status, email, first_name , last_name, userAgent}) {
+// ฟังก์ชันบันทึก Log
+async function saveLoginLog(sql, { adminId, ipAddress, status, email, first_name, last_name, userAgent }) {
   try {
-    // หมายเหตุ: ผมเพิ่ม email ลงไปใน log ด้วยเพื่อให้ตรวจสอบง่ายขึ้นกรณี adminId เป็น null
+    // ใช้ || null เพื่อกันค่า undefined กรณีเกิด Error ก่อนได้ค่า name
     await sql`
-      INSERT INTO admin_system_logs (admin_id, email, ip_address, status, action_type ,first_name , last_name, user_agent)
-      VALUES (${adminId}, ${email}, ${ipAddress}, ${status}, 'ADMIN_LOGIN', ${first_name}, ${last_name}, ${userAgent});
+      INSERT INTO admin_system_logs 
+      (admin_id, email, ip_address, status, action_type, first_name, last_name, user_agent)
+      VALUES (
+        ${adminId}, 
+        ${email}, 
+        ${ipAddress}, 
+        ${status}, 
+        'ADMIN_LOGIN', 
+        ${first_name || null}, 
+        ${last_name || null}, 
+        ${userAgent}
+      );
     `;
   } catch (e) {
     // ถ้าบันทึก Log ไม่สำเร็จ ให้แค่แสดง Error แต่ห้ามทำให้ระบบ Login หลักพัง
@@ -39,12 +49,17 @@ export default async function handler(req) {
     const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
     const userAgent = req.headers.get('user-agent') || null;
     
-    let email; 
+    // ประกาศตัวแปรไว้นอก Try เพื่อให้ Catch block มองเห็น
+    let email = null; 
+    let first_name = null;
+    let last_name = null;
     
     try {
       const body = await req.json();
       email = body.email;
-      const { first_name, last_name, access_token } = body;
+      first_name = body.first_name;
+      last_name = body.last_name;
+      const { access_token } = body;
       
       // เชื่อมต่อ Database
       const sql = neon(process.env.DATA_BASE_URL);
@@ -58,16 +73,20 @@ export default async function handler(req) {
             UPDATE admin_system SET 
               "access_token" = ${access_token}, 
               "last_name" = ${last_name}, 
-              "first_name" = ${first_name}  -- แก้ไขคำผิดจาก first_n ame เป็น first_name
+              "first_name" = ${first_name}
             WHERE "email" = ${email} 
             RETURNING *;
           `;
         
         // บันทึก Log: Success (Existing User)
         await saveLoginLog(sql, {
-          adminId: updatedUser[0].admin_id, // หรือ updatedUser[0].id ขึ้นอยู่กับชื่อ column ในตาราง admin_system
+          adminId: updatedUser[0].admin_id, 
           email: email,
-          first_name, last_name, ipAddress, status: 'SUCCESS'
+          first_name, 
+          last_name, 
+          ipAddress, 
+          userAgent, // เพิ่ม userAgent ที่เคยขาดไป
+          status: 'SUCCESS'
         });
 
         return new Response(JSON.stringify(updatedUser[0]), { 
@@ -85,9 +104,13 @@ export default async function handler(req) {
         
         // บันทึก Log: Success (New User)
         await saveLoginLog(sql, {
-          userId: newUser[0].admin_id,
+          adminId: newUser[0].admin_id, // แก้ไข: เปลี่ยนจาก userId เป็น adminId ให้ตรงกับฟังก์ชัน
           email: email,
-          first_name, last_name, ipAddress, userAgent, status: 'SUCCESS'
+          first_name, 
+          last_name, 
+          ipAddress, 
+          userAgent, 
+          status: 'SUCCESS'
         });
 
         return new Response(JSON.stringify(newUser[0]), { 
@@ -103,9 +126,13 @@ export default async function handler(req) {
       try {
           const sql = neon(process.env.DATA_BASE_URL);
           await saveLoginLog(sql, {
-            userId: null, // ไม่มี User ID เพราะ Login พลาด
-            email: email || 'unknown', // พยายามเก็บ email ที่ user กรอกมา
-            provider, ipAddress, userAgent, status: 'FAILED'
+            adminId: null, // Login พลาด ไม่มี Admin ID
+            email: email || 'unknown',
+            first_name: first_name, // ส่งค่าเท่าที่มี (อาจเป็น null)
+            last_name: last_name,   // ส่งค่าเท่าที่มี (อาจเป็น null)
+            ipAddress, 
+            userAgent, 
+            status: 'FAILED'
           });
       } catch (logError) { console.error("Log Error:", logError); }
 
