@@ -145,7 +145,7 @@ export default async function handler(req) {
             target: 'new_admin_created',
             new_admin_id: newUser[0].admin_id,
             new_admin_email: newUser[0].email,
-            new_admin_name: `${newUser[0].first_name} ${newUser[0].last_name}`
+            // new_admin_name: `${newUser[0].first_name} ${newUser[0].last_name}`
         }
       });
 
