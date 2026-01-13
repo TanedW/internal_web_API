@@ -1,5 +1,3 @@
-// /api/AdminLogin.js
-
 export const config = {
   runtime: 'edge',
 };
@@ -15,7 +13,6 @@ const corsHeaders = {
 // ฟังก์ชันบันทึก Log
 async function saveLoginLog(sql, { adminId, ipAddress, status, email, first_name, last_name, userAgent }) {
   try {
-    // ใช้ || null เพื่อกันค่า undefined กรณีเกิด Error ก่อนได้ค่า name
     await sql`
       INSERT INTO admin_system_logs 
       (admin_id, email, ip_address, status, action_type, first_name, last_name, user_agent)
@@ -31,25 +28,21 @@ async function saveLoginLog(sql, { adminId, ipAddress, status, email, first_name
       );
     `;
   } catch (e) {
-    // ถ้าบันทึก Log ไม่สำเร็จ ให้แค่แสดง Error แต่ห้ามทำให้ระบบ Login หลักพัง
     console.error("Error saving log:", e);
   }
 }
 
 export default async function handler(req) {
   
-  // 1. Handle CORS Preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
-  // 2. Handle POST
   if (req.method === 'POST') {
     const forwarded = req.headers.get('x-forwarded-for');
     const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
     const userAgent = req.headers.get('user-agent') || null;
     
-    // ประกาศตัวแปรไว้นอก Try เพื่อให้ Catch block มองเห็น
     let email = null; 
     let first_name = null;
     let last_name = null;
@@ -61,14 +54,13 @@ export default async function handler(req) {
       last_name = body.last_name;
       const { access_token } = body;
       
-      // เชื่อมต่อ Database
       const sql = neon(process.env.DATA_BASE_URL);
 
-      // 3. Check existing user in admin_system
+      // Check existing user
       const existingUser = await sql`SELECT * FROM admin_system WHERE "email" = ${email}`;
 
       if (existingUser.length > 0) {
-        // --- Case 1: User exists -> Update Name & Token ---
+        // --- Case 1: พบผู้ใช้ในระบบ -> อนุญาตให้ Login ---
         const updatedUser = await sql`
             UPDATE admin_system SET 
               "access_token" = ${access_token}, 
@@ -78,14 +70,13 @@ export default async function handler(req) {
             RETURNING *;
           `;
         
-        // บันทึก Log: Success (Existing User)
         await saveLoginLog(sql, {
           adminId: updatedUser[0].admin_id, 
           email: email,
           first_name, 
           last_name, 
           ipAddress, 
-          userAgent, // เพิ่ม userAgent ที่เคยขาดไป
+          userAgent,
           status: 'SUCCESS'
         });
 
@@ -95,26 +86,24 @@ export default async function handler(req) {
         });
 
       } else {
-        // --- Case 2: Create New User ---
-        const newUser = await sql`
-          INSERT INTO admin_system ("email", "first_name", "last_name", "access_token") 
-          VALUES (${email}, ${first_name}, ${last_name}, ${access_token}) 
-          RETURNING *;
-        `;
+        // --- Case 2: ไม่พบผู้ใช้ (New User) -> ปฏิเสธการเข้าใช้งาน (REJECT) ---
         
-        // บันทึก Log: Success (New User)
+        // บันทึก Log: Failed Attempt (Unauthorized)
         await saveLoginLog(sql, {
-          adminId: newUser[0].admin_id, // แก้ไข: เปลี่ยนจาก userId เป็น adminId ให้ตรงกับฟังก์ชัน
+          adminId: null,
           email: email,
           first_name, 
           last_name, 
           ipAddress, 
           userAgent, 
-          status: 'SUCCESS'
+          status: 'FAILED_UNAUTHORIZED' // ระบุสถานะว่าไม่มีสิทธิ์
         });
 
-        return new Response(JSON.stringify(newUser[0]), { 
-            status: 201, 
+        // ส่ง error กลับไปให้ Frontend (403 Forbidden)
+        return new Response(JSON.stringify({ 
+            message: 'Access Denied: Your email is not authorized.' 
+        }), { 
+            status: 403, // หรือ 401
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
@@ -122,17 +111,16 @@ export default async function handler(req) {
     } catch (error) {
       console.error("API Error:", error);
 
-      // บันทึก Log: Failed Attempt
       try {
           const sql = neon(process.env.DATA_BASE_URL);
           await saveLoginLog(sql, {
-            adminId: null, // Login พลาด ไม่มี Admin ID
+            adminId: null,
             email: email || 'unknown',
-            first_name: first_name, // ส่งค่าเท่าที่มี (อาจเป็น null)
-            last_name: last_name,   // ส่งค่าเท่าที่มี (อาจเป็น null)
+            first_name,
+            last_name,
             ipAddress, 
             userAgent, 
-            status: 'FAILED'
+            status: 'FAILED_ERROR'
           });
       } catch (logError) { console.error("Log Error:", logError); }
 
