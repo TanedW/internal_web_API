@@ -63,28 +63,51 @@ export default async function handler(req) {
       });
     }
 
-    // Handle POST request (Create)
+// Handle POST request (Create)
     if (req.method === 'POST') {
-      const { email, first_name, last_name } = await req.json();
+      // 1. รับค่า current_admin_id เพิ่มเข้ามา
+      const { email, first_name, last_name, current_admin_id } = await req.json();
+
       if (!email || !first_name || !last_name) {
         return new Response(JSON.stringify({ message: 'Email, first_name, and last_name are required' }), { status: 400, headers: corsHeaders });
       }
+      
+      // (Optional) เช็คว่ามี current_admin_id ไหม ถ้าซีเรียสเรื่อง Audit Trail
+      if (!current_admin_id) {
+         return new Response(JSON.stringify({ message: 'Current Admin ID is required for logging' }), { status: 400, headers: corsHeaders });
+      }
+
+      // 2. สร้าง Admin คนใหม่
       const newUser = await sql`
         INSERT INTO admin_system (email, first_name, last_name) 
         VALUES (${email}, ${first_name}, ${last_name}) 
         RETURNING *;
       `;
+
+      // 3. บันทึก Log ว่า "ใคร" เป็นคนทำ
       await saveAdminLog(sql, {
-        adminId: newUser[0].admin_id,
-        email: newUser[0].email,
-        first_name: newUser[0].first_name,
-        last_name: newUser[0].last_name,
+        adminId: current_admin_id, // <--- ใช้ ID ของคนที่กดเพิ่ม (Actor)
+        // หมายเหตุ: ตรง email/name ข้างล่างนี้ ถ้าอยากได้ของคนทำรายการ ต้อง Query มาเพิ่ม หรือส่งมาคู่กัน 
+        // แต่ถ้าใส่ null ไว้ database อาจจะไป join เอาทีหลังได้ หรือจะใส่เป็น email ของคนใหม่เพื่ออ้างอิงก็ได้ แต่จะสับสน
+        // แนะนำให้ใส่ null หรือส่งข้อมูลคนทำรายการมาด้วยหากต้องการเก็บ snapshot ชื่อตอนนั้น
+        email: null, 
+        first_name: null, 
+        last_name: null,
+        
         action_type: 'ADMIN_ADD',
         status: 'SUCCESS',
         ipAddress,
         userAgent,
-        details: { new_admin_id: newUser[0].admin_id, email: newUser[0].email }
+        
+        // เก็บรายละเอียดของ "คนใหม่" ไว้ใน details
+        details: { 
+            target: 'new_admin_created',
+            new_admin_id: newUser[0].admin_id, 
+            new_admin_email: newUser[0].email,
+            new_admin_name: `${newUser[0].first_name} ${newUser[0].last_name}`
+        }
       });
+
       return new Response(JSON.stringify(newUser[0]), {
         status: 201,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
