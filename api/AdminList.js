@@ -115,16 +115,19 @@ export default async function handler(req) {
     // POST: สร้าง Admin ใหม่
     // =================================================================
     if (req.method === 'POST') {
-      const { email, first_name, last_name } = body;
+      // const { email, first_name, last_name } = body;
+      const { email, } = body;
 
-      if (!email || !first_name || !last_name) {
+
+      // if (!email || !first_name || !last_name) {
+      if (!email) {
         return new Response(JSON.stringify({ message: 'Email, first_name, and last_name are required' }), { status: 400, headers: corsHeaders });
       }
 
       // สร้าง Admin คนใหม่ (Target)
       const newUser = await sql`
-        INSERT INTO admin_system (email, first_name, last_name) 
-        VALUES (${email}, ${first_name}, ${last_name}) 
+        INSERT INTO admin_system (email,) 
+        VALUES (${email}}) 
         RETURNING *;
       `;
 
