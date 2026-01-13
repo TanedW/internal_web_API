@@ -126,8 +126,8 @@ export default async function handler(req) {
 
       // สร้าง Admin คนใหม่ (Target)
       const newUser = await sql`
-        INSERT INTO admin_system (email,) 
-        VALUES (${email}}) 
+        INSERT INTO admin_system (email ) 
+        VALUES (${email}) 
         RETURNING *;
       `;
 
