@@ -63,7 +63,7 @@ export default async function handler(req) {
       const admins = await sql`
         SELECT admin_id, email, first_name, last_name 
         FROM admin_system 
-        ORDER BY created_at DESC; -- หรือเรียงตาม admin_id
+        ORDER BY join_at DESC; -- หรือเรียงตาม admin_id
       `;
       return new Response(JSON.stringify(admins), {
         status: 200,
