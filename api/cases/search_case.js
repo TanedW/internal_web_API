@@ -4,34 +4,23 @@ export const config = {
 
 import { neon } from '@neondatabase/serverless';
 
-// ----------------------------------------------------------------------
-// Main Handler
-// ----------------------------------------------------------------------
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS', // เน้น GET สำหรับการค้นหา
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
 export default async function handler(req) {
-  // Handle CORS Preflight request
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   const sql = neon(process.env.DATA_BASE_URL);
   const { searchParams } = new URL(req.url);
-  
-  // รับค่า id ที่ส่งมาจากหน้าบ้าน (เช่น ?id=CASE-001)
-  const id = searchParams.get('id'); 
+  const id = searchParams.get('id'); // รับ case_code (เช่น CASE-001)
 
   try {
-    // =================================================================
-    // GET: ค้นหา Case ตาม case_code
-    // =================================================================
     if (req.method === 'GET') {
-      
-      // Validation: ตรวจสอบว่ามีการส่ง ID มาหรือไม่
       if (!id) {
         return new Response(JSON.stringify({ found: false, message: 'Case ID is required' }), {
           status: 400,
@@ -39,14 +28,16 @@ export default async function handler(req) {
         });
       }
 
-      // Query ค้นหาในตาราง issue_cases ที่ column case_code
+      // -----------------------------------------------------
+      // STEP 1: ค้นหาข้อมูล Case หลักจากตาราง issue_cases
+      // -----------------------------------------------------
+      // สมมติว่า PK ของ issue_cases ชื่อ 'issue_cases_id' (ตามที่ Foreign Key อ้างถึง)
       const cases = await sql`
         SELECT * FROM issue_cases 
         WHERE case_code = ${id}
-        LIMIT 1; -- เอาแค่รายการเดียวที่เจอ
+        LIMIT 1;
       `;
 
-      // กรณีไม่เจอข้อมูล
       if (cases.length === 0) {
         return new Response(JSON.stringify({ found: false, message: 'Case not found' }), {
           status: 404,
@@ -54,28 +45,41 @@ export default async function handler(req) {
         });
       }
 
-      // กรณีเจอข้อมูล ส่งข้อมูลกลับไป
-      // ปรับโครงสร้างข้อมูลให้ตรงกับที่หน้าบ้านต้องการ (data: ...)
+      const foundCase = cases[0]; // เก็บข้อมูล Case ไว้ก่อน
+
+      // -----------------------------------------------------
+      // STEP 2: ค้นหารูปภาพทั้งหมดจากตาราง case_media
+      // -----------------------------------------------------
+      // ใช้ ID จริง (UUID) จาก step 1 ไปค้นหาในตารางรูป
+      const images = await sql`
+        SELECT id, url, media_type, created_at 
+        FROM case_media 
+        WHERE case_id = ${foundCase.issue_cases_id} -- ต้องใช้ UUID ของเคสนั้นๆ
+        ORDER BY created_at DESC;
+      `;
+
+      // -----------------------------------------------------
+      // STEP 3: รวมข้อมูลแล้วส่งกลับ
+      // -----------------------------------------------------
+      // ยัดรูปที่เจอ ใส่เข้าไปใน field ชื่อ 'images' (เป็น Array)
+      const resultData = {
+        ...foundCase,
+        images: images // ส่งไปเป็น Array [] แม้จะมีรูปเดียวหรือไม่มีเลย
+      };
+
       return new Response(JSON.stringify({ 
         found: true, 
-        data: cases[0] 
+        data: resultData 
       }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // กรณี Method อื่นที่ไม่ใช่ GET
-    return new Response(JSON.stringify({ message: `Method ${req.method} Not Allowed` }), {
-      status: 405,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(JSON.stringify({ message: 'Method Not Allowed' }), { status: 405, headers: corsHeaders });
 
   } catch (error) {
     console.error("API Error:", error);
-    return new Response(JSON.stringify({ message: 'An error occurred', error: error.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(JSON.stringify({ message: 'Error', error: error.message }), { status: 500, headers: corsHeaders });
   }
 }
