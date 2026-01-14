@@ -63,7 +63,7 @@ export default async function handler(req) {
     // =================================================================
     if (req.method === 'GET') {
       const admins = await sql`
-        SELECT admin_id, email, first_name, last_name 
+        SELECT admin_id, email, first_name, last_name ,profile_url
         FROM admin_system 
         ORDER BY join_at DESC; -- หรือเรียงตาม admin_id
       `;
