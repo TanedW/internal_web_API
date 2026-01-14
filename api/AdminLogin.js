@@ -46,6 +46,7 @@ export default async function handler(req) {
     let email = null; 
     let first_name = null;
     let last_name = null;
+    let profile_url = null;
     
     try {
       const body = await req.json();
