@@ -53,7 +53,7 @@ export default async function handler(req) {
       email = body.email;
       first_name = body.first_name;
       last_name = body.last_name;
-      profile_url = body.profile_urls;
+      profile_url = body.profile_url;
       const { access_token } = body;
       
       const sql = neon(process.env.DATA_BASE_URL);
