@@ -1,3 +1,5 @@
+// api/cases/search_case.js
+
 export const config = {
   runtime: 'edge',
 };

@@ -1,3 +1,5 @@
+// api/AdminList.js
+
 export const config = {
   runtime: 'edge',
 };
