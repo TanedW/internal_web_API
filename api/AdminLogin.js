@@ -68,7 +68,7 @@ export default async function handler(req) {
               "access_token" = ${access_token}, 
               "last_name" = ${last_name}, 
               "first_name" = ${first_name},
-              "profile_url" = ${profile_url},
+              "profile_url" = ${profile_url}
             WHERE "email" = ${email} 
             RETURNING *;
           `;
