@@ -1,3 +1,8 @@
+```mermaid
+---
+config:
+  layout: dagre
+---
 erDiagram
     %% Admin System Tables
     admin_system {
@@ -42,3 +47,5 @@ erDiagram
     %% Relationships
     admin_system ||--o{ admin_system_logs : "performs / logs"
     issue_cases ||--o{ case_media : "contains"
+
+    ```
