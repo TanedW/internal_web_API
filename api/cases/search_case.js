@@ -33,7 +33,7 @@ export default async function handler(req) {
       // -----------------------------------------------------
       // สมมติว่า PK ของ issue_cases ชื่อ 'issue_cases_id' (ตามที่ Foreign Key อ้างถึง)
       const cases = await sql`
-        SELECT cover_image_url
+        SELECT cover_image_url, issue_cases_id
         FROM issue_cases 
         WHERE case_code = ${id}
         LIMIT 1;
