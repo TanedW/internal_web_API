@@ -1,135 +1,96 @@
-// api/cases/manage_case.js
-
 export const config = {
   runtime: 'edge',
 };
 
 import { neon } from '@neondatabase/serverless';
 
-// Helper: Header สำหรับ CORS (ถ้าเรียกจาก domain อื่น หรือ localhost ต่าง port)
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Methods': 'PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
 export default async function handler(req) {
-  // 1. Handle Preflight Request
+  // 1. Preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
+  // 2. Allow only PUT
+  if (req.method !== 'PUT') {
+    return new Response(JSON.stringify({ message: 'Method not allowed. Only PUT is supported.' }), { status: 405, headers: corsHeaders });
+  }
+
   const sql = neon(process.env.DATA_BASE_URL);
   
-  // รับ ID จาก URL (สำหรับ GET One, PUT, DELETE)
-  // เช่น /api/cases/manage?id=uuid-ของ-case
+  // รับ Case ID จาก URL
   const { searchParams } = new URL(req.url);
-  const id = searchParams.get('id'); 
+  const case_id = searchParams.get('id'); 
+
+  if (!case_id) {
+    return new Response(JSON.stringify({ message: 'Case ID is required in URL parameter' }), { status: 400, headers: corsHeaders });
+  }
 
   try {
-    // อ่าน Body (สำหรับ POST, PUT)
     let body = {};
-    if (['POST', 'PUT'].includes(req.method)) {
-      try {
-        body = await req.json();
-      } catch (e) { /* body empty */ }
+    try {
+      body = await req.json();
+    } catch (e) {
+      return new Response(JSON.stringify({ message: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
     }
 
-    // =========================================================
-    // 🛡️ Security Check: ตรวจสอบคนทำรายการ (Admin)
-    // =========================================================
-    // สำหรับ POST, PUT, DELETE ต้องส่ง current_admin_id มาด้วยเสมอ
-    if (req.method !== 'GET') {
-        const { current_admin_id } = body; // หรือรับจาก params สำหรับ DELETE
-        if (!current_admin_id && req.method !== 'DELETE') {
-             // หมายเหตุ: DELETE ปกติไม่ส่ง body ถ้าจะส่ง admin_id อาจต้องส่งผ่าน query params หรือ header
-             // ในตัวอย่างนี้ขอละไว้เน้น Logic หลักครับ
-             return new Response(JSON.stringify({ message: 'Require current_admin_id' }), { status: 400, headers: corsHeaders });
-        }
-        // (ตรงนี้คุณสามารถใส่ Logic บันทึก Log แบบไฟล์ AdminList.js ได้เลย)
+    // Parameters:
+    // current_admin_id: ต้องมีเสมอ
+    // cover_image_url: ส่งมาถ้าจะแก้หน้าปกเคส
+    // media_id + media_url: ส่งมาถ้าจะแก้ link ของรูปในคลัง
+    const { current_admin_id, cover_image_url, media_id, media_url } = body;
+    
+    // Security Check
+    if (!current_admin_id) {
+         return new Response(JSON.stringify({ message: 'Require current_admin_id' }), { status: 400, headers: corsHeaders });
     }
 
-    // =========================================================
-    // 1. READ (GET) - ดึงข้อมูล
-    // =========================================================
-    if (req.method === 'GET') {
-      if (id) {
-        // 1.1 ดึงรายตัว
-        const cases = await sql`SELECT * FROM issue_cases WHERE issue_cases_id = ${id}`;
-        return new Response(JSON.stringify(cases[0] || {}), { status: 200, headers: corsHeaders });
-      } else {
-        // 1.2 ดึงทั้งหมด (ควรมี LIMIT)
-        const cases = await sql`
-            SELECT issue_cases_id, case_code, department, status, cover_image_url, created_at 
-            FROM issue_cases 
-            ORDER BY created_at DESC 
-            LIMIT 50
+    // Check ว่ามีการส่งค่ามาอัปเดตบ้างไหม
+    if (!cover_image_url && (!media_id || !media_url)) {
+        return new Response(JSON.stringify({ message: 'Nothing to update. Please provide cover_image_url OR (media_id AND media_url)' }), { status: 400, headers: corsHeaders });
+    }
+
+    const results = {};
+
+    // ---------------------------------------------------------
+    // A. ถ้ามี cover_image_url -> Update ตาราง issue_cases
+    // ---------------------------------------------------------
+    if (cover_image_url) {
+        const updatedCase = await sql`
+            UPDATE issue_cases 
+            SET 
+                cover_image_url = ${cover_image_url},
+                updated_at = NOW()
+            WHERE issue_cases_id = ${case_id}
+            RETURNING issue_cases_id, cover_image_url;
         `;
-        return new Response(JSON.stringify(cases), { status: 200, headers: corsHeaders });
-      }
+        results.case_update = updatedCase[0] || 'Case ID not found';
     }
 
-    // =========================================================
-    // 2. CREATE (POST) - สร้าง Case ใหม่
-    // =========================================================
-    if (req.method === 'POST') {
-      const { case_code, department, status, cover_image_url, description } = body;
-
-      // Validation เบื้องต้น
-      if (!case_code || !department) {
-        return new Response(JSON.stringify({ message: 'Missing required fields' }), { status: 400, headers: corsHeaders });
-      }
-
-      const newCase = await sql`
-        INSERT INTO issue_cases (case_code, department, status, cover_image_url, description)
-        VALUES (${case_code}, ${department}, ${status || 'Open'}, ${cover_image_url}, ${description})
-        RETURNING *;
-      `;
-
-      return new Response(JSON.stringify({ success: true, data: newCase[0] }), { status: 201, headers: corsHeaders });
+    // ---------------------------------------------------------
+    // B. ถ้ามี media_id และ media_url -> Update ตาราง case_media
+    // ---------------------------------------------------------
+    if (media_id && media_url) {
+        // อัปเดต URL ของ media แถวนั้น (เช็ค case_id เพื่อความปลอดภัยว่าแก้ถูกเคส)
+        const updatedMedia = await sql`
+            UPDATE case_media
+            SET 
+                url = ${media_url}
+            WHERE id = ${media_id} AND case_id = ${case_id}
+            RETURNING id, url, media_type;
+        `;
+        results.media_update = updatedMedia[0] || 'Media ID not found or does not match Case ID';
     }
 
-    // =========================================================
-    // 3. UPDATE (PUT) - แก้ไขข้อมูล
-    // =========================================================
-    if (req.method === 'PUT') {
-      if (!id) return new Response(JSON.stringify({ message: 'ID required' }), { status: 400, headers: corsHeaders });
-      
-      const { status, cover_image_url, department } = body;
-
-      const updatedCase = await sql`
-        UPDATE issue_cases 
-        SET 
-          status = ${status},
-          department = ${department},
-          cover_image_url = ${cover_image_url},
-          updated_at = NOW() -- อย่าลืม update เวลา
-        WHERE issue_cases_id = ${id}
-        RETURNING *;
-      `;
-
-      if (updatedCase.length === 0) return new Response(JSON.stringify({ message: 'Case not found' }), { status: 404, headers: corsHeaders });
-
-      return new Response(JSON.stringify({ success: true, data: updatedCase[0] }), { status: 200, headers: corsHeaders });
-    }
-
-    // =========================================================
-    // 4. DELETE (DELETE) - ลบข้อมูล
-    // =========================================================
-    if (req.method === 'DELETE') {
-      if (!id) return new Response(JSON.stringify({ message: 'ID required' }), { status: 400, headers: corsHeaders });
-
-      // ลบจริง (Hard Delete)
-      const deletedCase = await sql`
-        DELETE FROM issue_cases WHERE issue_cases_id = ${id} RETURNING issue_cases_id;
-      `;
-      
-      // หรือถ้าจะทำ Soft Delete (แค่เปลี่ยน status เป็น Cancelled) ให้ใช้ UPDATE แทน
-
-      if (deletedCase.length === 0) return new Response(JSON.stringify({ message: 'Case not found' }), { status: 404, headers: corsHeaders });
-
-      return new Response(JSON.stringify({ success: true, message: 'Deleted' }), { status: 200, headers: corsHeaders });
-    }
+    return new Response(JSON.stringify({ 
+        success: true, 
+        changes: results
+    }), { status: 200, headers: corsHeaders });
 
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
