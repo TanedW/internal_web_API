@@ -35,9 +35,16 @@ export default async function handler(req) {
       // -----------------------------------------------------
       // สมมติว่า PK ของ issue_cases ชื่อ 'issue_cases_id' (ตามที่ Foreign Key อ้างถึง)
       const cases = await sql`
-        SELECT cover_image_url, issue_cases_id
-        FROM issue_cases 
-        WHERE case_code = ${id}
+        SELECT 
+          ic.issue_cases_id,
+          ic.cover_image_url,
+          o.organization_name
+        FROM issue_cases ic
+        LEFT JOIN case_organizations co 
+          ON ic.issue_cases_id = co.case_id
+        LEFT JOIN organizations o 
+          ON co.organization_id = o.organization_id
+        WHERE ic.case_code = ${id}
         LIMIT 1;
       `;
 
