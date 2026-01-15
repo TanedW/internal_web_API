@@ -38,14 +38,21 @@ export default async function handler(req) {
         SELECT 
           ic.issue_cases_id,
           ic.cover_image_url,
-          o.organization_name
+          -- รวมชื่อหน่วยงานทั้งหมดเป็น JSON Array 
+          -- ผลลัพธ์จะเป็น: [{"id": 1, "name": "โยธา"}, {"id": 2, "name": "ประปา"}]
+          COALESCE(
+            json_agg(
+              json_build_object('id', o.organization_id, 'name', o.organization_name)
+            ) FILTER (WHERE o.organization_id IS NOT NULL), 
+            '[]'
+          ) AS organizations
         FROM issue_cases ic
         LEFT JOIN case_organizations co 
           ON ic.issue_cases_id = co.case_id
         LEFT JOIN organizations o 
           ON co.organization_id = o.organization_id
         WHERE ic.case_code = ${id}
-        LIMIT 1;
+        GROUP BY ic.issue_cases_id;
       `;
 
       if (cases.length === 0) {
