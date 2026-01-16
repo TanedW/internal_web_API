@@ -1,6 +1,5 @@
 // api/AdminList.js
 
-// ไม่ต้องใส่ export const config = { runtime: 'nodejs' }; แล้วก็ได้ครับ เพราะเป็น Default อยู่แล้ว
 import { neon } from '@neondatabase/serverless';
 import { Permit } from "permitio";
 
