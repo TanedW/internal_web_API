@@ -37,7 +37,7 @@ export default async function handler(req) {
       const cases = await sql`
         SELECT 
           ic.issue_cases_id,
-          ic.creat_at,
+          ic.created_at,
           ic.cover_image_url,
           -- รวมชื่อหน่วยงานทั้งหมดเป็น JSON Array 
           -- ผลลัพธ์จะเป็น: [{"id": 1, "name": "โยธา"}, {"id": 2, "name": "ประปา"}]
