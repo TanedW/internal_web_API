@@ -1,14 +1,10 @@
 // api/AdminList.js
 
-// ✅ ใช้ Node.js runtime เพื่อความเสถียรของ SDK
-export const config = {
-  runtime: 'nodejs',
-};
-
+// ไม่ต้องใส่ export const config = { runtime: 'nodejs' }; แล้วก็ได้ครับ เพราะเป็น Default อยู่แล้ว
 import { neon } from '@neondatabase/serverless';
 import { Permit } from "permitio";
 
-// ✅ Initialize Permit
+// Initialize Permit
 const permit = new Permit({
   pdp: "https://cloudpdp.api.permit.io",
   token: process.env.PERMIT_API_KEY,
@@ -33,47 +29,43 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
 }
 
 // ----------------------------------------------------------------------
-// Main Handler
+// Main Handler (Node.js Style)
 // ----------------------------------------------------------------------
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
+export default async function handler(req, res) {
+  // 1. Setup CORS manually (Node.js API Route ไม่ได้จัดการ CORS ให้ auto ในบางกรณี)
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-export default async function handler(req) {
-  // CORS Preflight
+  // Handle Preflight Request
   if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return res.status(200).end();
   }
 
   const sql = neon(process.env.DATA_BASE_URL);
-  
-  // Parse URL & Query Params
-  const url = new URL(req.url, 'http://localhost');
-  const searchParams = url.searchParams;
-  const id = searchParams.get('id');
 
-  // Get Client Info
-  const forwarded = req.headers.get('x-forwarded-for');
-  const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
-  const userAgent = req.headers.get('user-agent') || null;
+  // 2. ดึงข้อมูลจาก req แบบ Node.js (ง่ายกว่าเดิม)
+  // Query Params (เช่น ?id=1) อยู่ใน req.query เลย
+  const { id, requester_id } = req.query; 
+
+  // Headers ใช้แบบ array index
+  const forwarded = req.headers['x-forwarded-for'];
+  const ipAddress = forwarded ? (typeof forwarded === 'string' ? forwarded.split(',')[0] : forwarded[0]) : null;
+  const userAgent = req.headers['user-agent'] || null;
 
   try {
     // =================================================================
-    // GET: ดึงข้อมูล + เช็คสิทธิ์คนดู (Permission Check for UI)
+    // GET: ดึงข้อมูล + เช็คสิทธิ์
     // =================================================================
     if (req.method === 'GET') {
-      const requesterId = searchParams.get('requester_id'); // รับ ID คนที่กำลังเปิดหน้าเว็บ
       let canDelete = false;
 
-      // ถ้ามี ID ส่งมา ให้ถาม Permit ว่าคนนี้มีสิทธิ์ 'delete' ไหม?
-      if (requesterId) {
+      // เช็คสิทธิ์กับ Permit
+      if (requester_id) {
          try {
-           canDelete = await permit.check(requesterId, "delete", "Admin_Users");
+           canDelete = await permit.check(String(requester_id), "delete", "Admin_Users");
          } catch (e) {
            console.error("Permit Check Error:", e);
-           // กรณี Error ให้ถือว่าไม่มีสิทธิ์ไว้ก่อน (Fail Safe)
            canDelete = false;
          }
       }
@@ -84,74 +76,72 @@ export default async function handler(req) {
         ORDER BY join_at DESC;
       `;
 
-      // ส่งกลับเป็น Object { data, meta }
-      return new Response(JSON.stringify({
+      return res.status(200).json({
         data: admins,
-        meta: { can_delete: canDelete } // ส่ง Flag ไปบอก Frontend
-      }), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        meta: { can_delete: canDelete }
       });
     }
 
-    // อ่าน Body สำหรับ method อื่นๆ
-    let body = {};
-    if (req.method !== 'GET') {
-        try { body = await req.json(); } catch (e) {}
-    }
+    // สำหรับ method อื่นๆ ดึง Body ได้เลย (req.body เป็น object แล้ว ไม่ต้อง await req.json())
+    const body = req.body || {};
     
-    // ตรวจสอบ Actor (ผู้กระทำ)
+    // ตรวจสอบ Actor
     let actorAdmin = null;
     if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
         const { current_admin_id } = body;
-        if (!current_admin_id) {
-            return new Response(JSON.stringify({ message: 'current_admin_id is required' }), { status: 400, headers: corsHeaders });
+        
+        // พิเศษ: ถ้า DELETE บางที body อาจไม่ถูกส่งมากับ request บางประเภท
+        // ถ้าไม่มีใน body ให้ลองดูใน query (เผื่อไว้)
+        const checkId = current_admin_id; 
+
+        if (!checkId) {
+            return res.status(400).json({ message: 'current_admin_id is required' });
         }
-        const actors = await sql`SELECT * FROM admin_system WHERE admin_id = ${current_admin_id}`;
+        
+        const actors = await sql`SELECT * FROM admin_system WHERE admin_id = ${checkId}`;
         if (actors.length === 0) {
-            return new Response(JSON.stringify({ message: 'Actor not found' }), { status: 403, headers: corsHeaders });
+            return res.status(403).json({ message: 'Actor not found' });
         }
         actorAdmin = actors[0];
     }
 
     // =================================================================
-    // POST: สร้าง Admin ใหม่ + Sync Permit
+    // POST
     // =================================================================
     if (req.method === 'POST') {
       const { email } = body;
-      if (!email) return new Response(JSON.stringify({ message: 'Email required' }), { status: 400, headers: corsHeaders });
+      if (!email) return res.status(400).json({ message: 'Email required' });
 
-      // 1. Insert DB
       const newUser = await sql`
         INSERT INTO admin_system (email) VALUES (${email}) RETURNING *;
       `;
 
-      // 2. Sync to Permit (เพื่อให้ User ใหม่มีตัวตนในระบบ Permission)
+      // Sync Permit
       try {
         await permit.api.users.sync({
            key: String(newUser[0].admin_id),
            email: newUser[0].email,
-           roles: [{ role: "member", tenant: "default" }] // ให้ Role เริ่มต้นเป็น Member (ลบไม่ได้)
+           roles: [{ role: "member", tenant: "default" }]
         });
       } catch (e) {
          console.error("Permit Sync Error:", e);
       }
 
-      // 3. Log
+      // Log
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
         action_type: 'ADMIN_ADD', status: 'SUCCESS', ipAddress, userAgent,
         details: { target: 'new_admin_created', new_id: newUser[0].admin_id, new_email: newUser[0].email }
       });
 
-      return new Response(JSON.stringify(newUser[0]), { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return res.status(201).json(newUser[0]);
     }
 
     // =================================================================
-    // PUT: แก้ไข
+    // PUT
     // =================================================================
     if (req.method === 'PUT') {
-      if (!id) return new Response(JSON.stringify({ message: 'ID required' }), { status: 400, headers: corsHeaders });
+      if (!id) return res.status(400).json({ message: 'ID required' });
       const { first_name, last_name, email } = body;
 
       const updatedUser = await sql`
@@ -159,7 +149,7 @@ export default async function handler(req) {
         WHERE admin_id = ${id} RETURNING *;
       `;
 
-      if (updatedUser.length === 0) return new Response(JSON.stringify({ message: 'Not found' }), { status: 404, headers: corsHeaders });
+      if (updatedUser.length === 0) return res.status(404).json({ message: 'Not found' });
 
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
@@ -167,35 +157,30 @@ export default async function handler(req) {
         details: { target: 'admin_updated', target_id: id, updated_data: { email, first_name, last_name } }
       });
 
-      return new Response(JSON.stringify(updatedUser[0]), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return res.status(200).json(updatedUser[0]);
     }
 
     // =================================================================
-    // DELETE: ลบ Admin (Security Checkpoint)
+    // DELETE
     // =================================================================
     if (req.method === 'DELETE') {
-      if (!id) return new Response(JSON.stringify({ message: 'ID required' }), { status: 400, headers: corsHeaders });
+      if (!id) return res.status(400).json({ message: 'ID required' });
 
-      // ✅ 1. Check Permission
-      const isPermitted = await permit.check(
-        String(actorAdmin.admin_id), 
-        "delete",                    
-        "Admin_Users" // Key ต้องตรงกับ Permit Console (Admin_Users)
-      );
+      // Check Permit
+      const isPermitted = await permit.check(String(actorAdmin.admin_id), "delete", "Admin_Users");
 
       if (!isPermitted) {
         await saveAdminLog(sql, {
             adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
             action_type: 'ADMIN_DELETE', status: 'FORBIDDEN', ipAddress, userAgent,
-            details: { message: 'Permission denied by Permit.io', target_id: id }
+            details: { message: 'Permission denied', target_id: id }
         });
-        return new Response(JSON.stringify({ message: 'Forbidden: No permission to delete.' }), { status: 403, headers: corsHeaders });
+        return res.status(403).json({ message: 'Forbidden: No permission to delete.' });
       }
 
-      // ✅ 2. Delete
       const deletedUser = await sql`DELETE FROM admin_system WHERE admin_id = ${id} RETURNING *;`;
 
-      if (deletedUser.length === 0) return new Response(JSON.stringify({ message: 'Not found' }), { status: 404, headers: corsHeaders });
+      if (deletedUser.length === 0) return res.status(404).json({ message: 'Not found' });
 
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
@@ -203,16 +188,13 @@ export default async function handler(req) {
         details: { target: 'admin_deleted', deleted_id: id, deleted_email: deletedUser[0].email }
       });
 
-      // (Optional) ลบ User ใน Permit ด้วย
-      // try { await permit.api.users.delete(String(id)); } catch(e) {}
-
-      return new Response(JSON.stringify({ message: 'Deleted successfully' }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return res.status(200).json({ message: 'Deleted successfully' });
     }
 
-    return new Response(JSON.stringify({ message: 'Method Not Allowed' }), { status: 405, headers: corsHeaders });
+    return res.status(405).json({ message: 'Method Not Allowed' });
 
   } catch (error) {
     console.error("API Error:", error);
-    return new Response(JSON.stringify({ message: 'Server Error', error: error.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return res.status(500).json({ message: 'Server Error', error: error.message });
   }
 }
