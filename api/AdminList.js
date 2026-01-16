@@ -1,31 +1,38 @@
 // api/AdminList.js
 
+// 1. เปลี่ยน Runtime เป็น nodejs เพื่อให้ SDK ทำงานเสถียรที่สุด
 export const config = {
-  runtime: 'edge',
+  runtime: 'nodejs',
 };
 
 import { neon } from '@neondatabase/serverless';
+import { Permit } from "permitio"; // Import Permit SDK
+
+// 2. Initialize Permit
+// ตรวจสอบว่าได้ใส่ PERMIT_API_KEY ในไฟล์ .env แล้ว
+const permit = new Permit({
+  pdp: "https://cloudpdp.api.permit.io",
+  token: process.env.PERMIT_API_KEY,
+});
 
 // ----------------------------------------------------------------------
 // Helper Function: บันทึก Log ลง Database
 // ----------------------------------------------------------------------
 async function saveAdminLog(sql, { adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
   try {
-    // แปลง details object เป็น JSON string (หรือส่ง object ตรงๆ ถ้า driver รองรับ)
-    // แต่เพื่อความชัวร์ในบาง driver การส่ง object เข้าไปใน column JSONB มักจะทำได้เลย
     await sql`
       INSERT INTO admin_system_logs 
       (admin_id, email, first_name, last_name, action_type, status, ip_address, user_agent, details)
       VALUES (
-        ${adminId},       -- ID ของผู้กระทำ (Actor)
-        ${email},         -- Email ของผู้กระทำ
-        ${first_name},    -- ชื่อ ของผู้กระทำ
-        ${last_name},     -- นามสกุล ของผู้กระทำ
+        ${adminId},
+        ${email},
+        ${first_name},
+        ${last_name},
         ${action_type}, 
         ${status}, 
         ${ipAddress || null}, 
         ${userAgent || null},
-        ${details}        -- ข้อมูลรายละเอียด (เช่น ข้อมูลของคนใหม่ที่ถูกสร้าง) เก็บเป็น JSONB
+        ${details}
       );
     `;
   } catch (e) {
@@ -43,16 +50,14 @@ const corsHeaders = {
 };
 
 export default async function handler(req) {
-  // Handle CORS Preflight request
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   const sql = neon(process.env.DATA_BASE_URL);
-  const { searchParams } = new URL(req.url);
-  const id = searchParams.get('id'); // Target ID (สำหรับ PUT/DELETE)
+  const { searchParams } = new URL(req.url, 'http://localhost'); // เพิ่ม base url กัน error ใน nodejs environment
+  const id = searchParams.get('id'); 
 
-  // ดึง IP และ User Agent
   const forwarded = req.headers.get('x-forwarded-for');
   const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
   const userAgent = req.headers.get('user-agent') || null;
@@ -65,7 +70,7 @@ export default async function handler(req) {
       const admins = await sql`
         SELECT admin_id, email, first_name, last_name ,profile_url
         FROM admin_system 
-        ORDER BY join_at DESC; -- หรือเรียงตาม admin_id
+        ORDER BY join_at DESC;
       `;
       return new Response(JSON.stringify(admins), {
         status: 200,
@@ -73,19 +78,15 @@ export default async function handler(req) {
       });
     }
 
-    // อ่าน Body ครั้งเดียวสำหรับ method ที่ต้องใช้ (POST, PUT, DELETE)
-    // หมายเหตุ: DELETE ปกติไม่ส่ง Body แต่ถ้า Client คุณส่งมาเพื่อระบุตัวตนก็ใช้ได้
+    // อ่าน Body
     let body = {};
     if (req.method !== 'GET') {
         try {
             body = await req.json();
-        } catch (e) {
-            // กรณีไม่มี body ส่งมา
-        }
+        } catch (e) {}
     }
     
-    // ตรวจสอบ Actor (ผู้กระทำ) สำหรับ POST, PUT, DELETE
-    // ต้องส่ง "current_admin_id" มาใน JSON Body เสมอ
+    // ตรวจสอบ Actor (ผู้กระทำ)
     let actorAdmin = null;
     if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
         const { current_admin_id } = body;
@@ -97,7 +98,6 @@ export default async function handler(req) {
             });
         }
 
-        // ค้นหาข้อมูลผู้กระทำจาก DB
         const actors = await sql`
             SELECT admin_id, email, first_name, last_name 
             FROM admin_system 
@@ -117,25 +117,35 @@ export default async function handler(req) {
     // POST: สร้าง Admin ใหม่
     // =================================================================
     if (req.method === 'POST') {
-      // const { email, first_name, last_name } = body;
-      const { email, } = body;
+      const { email } = body;
 
-
-      // if (!email || !first_name || !last_name) {
       if (!email) {
-        return new Response(JSON.stringify({ message: 'Email, first_name, and last_name are required' }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ message: 'Email is required' }), { status: 400, headers: corsHeaders });
       }
 
-      // สร้าง Admin คนใหม่ (Target)
+      // 1. สร้างใน DB
       const newUser = await sql`
-        INSERT INTO admin_system (email ) 
+        INSERT INTO admin_system (email) 
         VALUES (${email}) 
         RETURNING *;
       `;
 
-      // บันทึก Log
+      // 2. [NEW] Sync ไปยัง Permit.io ทันที เพื่อให้มีข้อมูลUserในระบบ
+      try {
+        await permit.api.users.sync({
+           key: String(newUser[0].admin_id),
+           email: newUser[0].email,
+           // กำหนด Role เริ่มต้น (Optional: แก้เป็น role ที่คุณต้องการ)
+           roles: [{ role: "member", tenant: "default" }] 
+        });
+      } catch (permitError) {
+         console.error("Permit Sync Error:", permitError);
+         // ไม่ return error เพราะถือว่าสร้างใน DB สำเร็จแล้ว (อาจจะไป sync manual ทีหลัง)
+      }
+
+      // 3. Log
       await saveAdminLog(sql, {
-        adminId: actorAdmin.admin_id,       // ผู้กระทำ
+        adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
         first_name: actorAdmin.first_name,
         last_name: actorAdmin.last_name,
@@ -147,7 +157,6 @@ export default async function handler(req) {
             target: 'new_admin_created',
             new_admin_id: newUser[0].admin_id,
             new_admin_email: newUser[0].email,
-            // new_admin_name: `${newUser[0].first_name} ${newUser[0].last_name}`
         }
       });
 
@@ -165,7 +174,6 @@ export default async function handler(req) {
 
       const { first_name, last_name, email } = body;
 
-      // อัปเดตข้อมูล
       const updatedUser = await sql`
         UPDATE admin_system 
         SET 
@@ -180,9 +188,10 @@ export default async function handler(req) {
         return new Response(JSON.stringify({ message: 'Target Admin not found' }), { status: 404, headers: corsHeaders });
       }
 
-      // บันทึก Log
+      // (Optional) ถ้ามีการแก้ Email อาจจะต้อง Sync ไป Permit ด้วย
+
       await saveAdminLog(sql, {
-        adminId: actorAdmin.admin_id,       // ผู้กระทำ
+        adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
         first_name: actorAdmin.first_name,
         last_name: actorAdmin.last_name,
@@ -204,12 +213,40 @@ export default async function handler(req) {
     }
 
     // =================================================================
-    // DELETE: ลบ Admin
+    // DELETE: ลบ Admin (จุดสำคัญ)
     // =================================================================
     if (req.method === 'DELETE') {
       if (!id) return new Response(JSON.stringify({ message: 'Target Admin ID is required' }), { status: 400, headers: corsHeaders });
 
-      // ลบข้อมูล
+      // [NEW] Check Permission with Permit.io
+      // ตรวจสอบว่า "คนกดลบ" (actorAdmin) มีสิทธิ์ delete บน resource "Admin_Users" หรือไม่
+      const isPermitted = await permit.check(
+        String(actorAdmin.admin_id), // User Key
+        "delete",                    // Action
+        "Admin_Users"                // Resource Key (ต้องตรงกับใน Console เป๊ะๆ)
+      );
+
+      if (!isPermitted) {
+        // บันทึก Log ว่า Access Denied
+        await saveAdminLog(sql, {
+            adminId: actorAdmin.admin_id,
+            email: actorAdmin.email,
+            first_name: actorAdmin.first_name,
+            last_name: actorAdmin.last_name,
+            action_type: 'ADMIN_DELETE',
+            status: 'FAILED', // หรือ FORBIDDEN
+            ipAddress,
+            userAgent,
+            details: { message: 'Permission denied by Permit.io', target_id: id }
+        });
+
+        return new Response(JSON.stringify({ message: 'Forbidden: You do not have permission to delete admins.' }), { 
+            status: 403, // ส่ง 403 กลับไป
+            headers: corsHeaders 
+        });
+      }
+
+      // ถ้าผ่าน -> ลบข้อมูล
       const deletedUser = await sql`
         DELETE FROM admin_system 
         WHERE admin_id = ${id}
@@ -217,7 +254,7 @@ export default async function handler(req) {
       `;
 
       if (deletedUser.length === 0) {
-        // กรณีลบไม่เจอ ก็ Log Failed ไว้ด้วย
+        // ลบไม่เจอ
         await saveAdminLog(sql, {
             adminId: actorAdmin.admin_id,
             email: actorAdmin.email,
@@ -232,9 +269,9 @@ export default async function handler(req) {
         return new Response(JSON.stringify({ message: 'Admin not found' }), { status: 404, headers: corsHeaders });
       }
 
-      // บันทึก Log Success
+      // ลบสำเร็จ
       await saveAdminLog(sql, {
-        adminId: actorAdmin.admin_id,       // ผู้กระทำ
+        adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
         first_name: actorAdmin.first_name,
         last_name: actorAdmin.last_name,
@@ -248,6 +285,8 @@ export default async function handler(req) {
             deleted_admin_email: deletedUser[0].email
         }
       });
+
+      // (Optional) อาจจะสั่ง permit.api.users.delete(...) เพื่อลบ User ใน Permit ด้วยก็ได้
 
       return new Response(JSON.stringify({ message: 'Admin deleted successfully' }), {
         status: 200,
