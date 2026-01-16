@@ -1,9 +1,39 @@
+// api/manage_case.js
+
 export const config = {
   runtime: 'edge',
 };
 
 import { neon } from '@neondatabase/serverless';
 
+// ----------------------------------------------------------------------
+// Helper Function: บันทึก Log ลง Database (นำมาจาก AdminList.js)
+// ----------------------------------------------------------------------
+async function saveAdminLog(sql, { adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
+  try {
+    await sql`
+      INSERT INTO admin_system_logs 
+      (admin_id, email, first_name, last_name, action_type, status, ip_address, user_agent, details)
+      VALUES (
+        ${adminId},       
+        ${email},         
+        ${first_name},    
+        ${last_name},     
+        ${action_type}, 
+        ${status}, 
+        ${ipAddress || null}, 
+        ${userAgent || null},
+        ${details}
+      );
+    `;
+  } catch (e) {
+    console.error("Error saving admin log:", e);
+  }
+}
+
+// ----------------------------------------------------------------------
+// Main Handler
+// ----------------------------------------------------------------------
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'PUT, OPTIONS',
@@ -27,6 +57,11 @@ export default async function handler(req) {
   const { searchParams } = new URL(req.url);
   const case_id = searchParams.get('id'); 
 
+  // ดึง IP และ User Agent สำหรับ Log
+  const forwarded = req.headers.get('x-forwarded-for');
+  const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
+  const userAgent = req.headers.get('user-agent') || null;
+
   if (!case_id) {
     return new Response(JSON.stringify({ message: 'Case ID is required in URL parameter' }), { status: 400, headers: corsHeaders });
   }
@@ -41,8 +76,6 @@ export default async function handler(req) {
 
     // Parameters:
     // current_admin_id: ต้องมีเสมอ
-    // cover_image_url: ส่งมาถ้าจะแก้หน้าปกเคส
-    // media_id + media_url: ส่งมาถ้าจะแก้ link ของรูปในคลัง
     const { current_admin_id, cover_image_url, media_id, media_url } = body;
     
     // Security Check
@@ -54,6 +87,23 @@ export default async function handler(req) {
     if (!cover_image_url && (!media_id || !media_url)) {
         return new Response(JSON.stringify({ message: 'Nothing to update. Please provide cover_image_url OR (media_id AND media_url)' }), { status: 400, headers: corsHeaders });
     }
+
+    // ---------------------------------------------------------
+    // Validate Actor (ตรวจสอบผู้กระทำ) - เพิ่มส่วนนี้เข้ามา
+    // ---------------------------------------------------------
+    const actors = await sql`
+        SELECT admin_id, email, first_name, last_name 
+        FROM admin_system 
+        WHERE admin_id = ${current_admin_id}
+    `;
+
+    if (actors.length === 0) {
+        return new Response(JSON.stringify({ message: 'Current Admin (Actor) not found in system' }), { 
+            status: 403, 
+            headers: corsHeaders 
+        });
+    }
+    const actorAdmin = actors[0];
 
     const results = {};
 
@@ -76,7 +126,6 @@ export default async function handler(req) {
     // B. ถ้ามี media_id และ media_url -> Update ตาราง case_media
     // ---------------------------------------------------------
     if (media_id && media_url) {
-        // อัปเดต URL ของ media แถวนั้น (เช็ค case_id เพื่อความปลอดภัยว่าแก้ถูกเคส)
         const updatedMedia = await sql`
             UPDATE case_media
             SET 
@@ -87,12 +136,32 @@ export default async function handler(req) {
         results.media_update = updatedMedia[0] || 'Media ID not found or does not match Case ID';
     }
 
+    // ---------------------------------------------------------
+    // บันทึก Log Success - เพิ่มส่วนนี้เข้ามา
+    // ---------------------------------------------------------
+    await saveAdminLog(sql, {
+        adminId: actorAdmin.admin_id,
+        email: actorAdmin.email,
+        first_name: actorAdmin.first_name,
+        last_name: actorAdmin.last_name,
+        action_type: 'CASE_UPDATE', // กำหนดประเภท action เป็นการแก้ไขเคส
+        status: 'SUCCESS',
+        ipAddress,
+        userAgent,
+        details: { 
+            target: 'case_management',
+            case_id: case_id,
+            updates: results // บันทึกสิ่งที่ถูกแก้ไขลงไปใน JSON details
+        }
+    });
+
     return new Response(JSON.stringify({ 
         success: true, 
         changes: results
     }), { status: 200, headers: corsHeaders });
 
   } catch (error) {
+    console.error("API Error:", error); // เพิ่ม log error ใน server console ด้วย
     return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
   }
 }
