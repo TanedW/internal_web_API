@@ -19,41 +19,32 @@ export default async function handler(req) {
 
   const sql = neon(process.env.DATA_BASE_URL);
   const { searchParams } = new URL(req.url);
-  const id = searchParams.get('id'); // รับ case_code (เช่น CASE-001)
+  const id = searchParams.get('id'); // รับ ticket_id (เช่น TKT-20260115-0001)
 
   try {
     if (req.method === 'GET') {
       if (!id) {
-        return new Response(JSON.stringify({ found: false, message: 'Case ID is required' }), {
+        return new Response(JSON.stringify({ found: false, message: 'Ticket ID is required' }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
       // -----------------------------------------------------
-      // STEP 1: ค้นหาข้อมูล Case หลักจากตาราง issue_cases
+      // STEP 1: ค้นหาข้อมูลหลักจากตาราง voice_message
       // -----------------------------------------------------
-      // สมมติว่า PK ของ issue_cases ชื่อ 'issue_cases_id' (ตามที่ Foreign Key อ้างถึง)
       const cases = await sql`
         SELECT 
-          ic.issue_cases_id,
-          ic.created_at,
-          ic.cover_image_url,
-          -- รวมชื่อหน่วยงานทั้งหมดเป็น JSON Array 
-          -- ผลลัพธ์จะเป็น: [{"id": 1, "name": "โยธา"}, {"id": 2, "name": "ประปา"}]
-          COALESCE(
-            json_agg(
-              json_build_object('id', o.organization_id, 'name', o.organization_name)
-            ) FILTER (WHERE o.organization_id IS NOT NULL), 
-            '[]'
-          ) AS organizations
-        FROM issue_cases ic
-        LEFT JOIN case_organizations co 
-          ON ic.issue_cases_id = co.case_id
-        LEFT JOIN organizations o 
-          ON co.organization_id = o.organization_id
-        WHERE ic.case_code = ${id}
-        GROUP BY ic.issue_cases_id;
+          id,
+          ticket_id,
+          problem_type,
+          address,
+          status,
+          comment,
+          timestamp,
+          ST_AsText(point) as location -- แปลงพิกัดเป็น Text (เช่น "POINT(100.5 13.7)") เพื่อให้อ่านง่าย
+        FROM voice_message
+        WHERE ticket_id = ${id}
       `;
 
       if (cases.length === 0) {
@@ -63,26 +54,32 @@ export default async function handler(req) {
         });
       }
 
-      const foundCase = cases[0]; // เก็บข้อมูล Case ไว้ก่อน
+      const foundCase = cases[0]; // เก็บข้อมูล Case หลักไว้
 
       // -----------------------------------------------------
-      // STEP 2: ค้นหารูปภาพทั้งหมดจากตาราง case_media
+      // STEP 2: ค้นหา Timeline/รูปภาพ จาก voice_attachment ผ่านตารางกลาง
       // -----------------------------------------------------
-      // ใช้ ID จริง (UUID) จาก step 1 ไปค้นหาในตารางรูป
-      const images = await sql`
-        SELECT id, url, media_type, created_at 
-        FROM case_media 
-        WHERE case_id = ${foundCase.issue_cases_id} -- ต้องใช้ UUID ของเคสนั้นๆ
-        ORDER BY created_at DESC;
+      // ใช้ ID (Integer) จาก Step 1 มาค้นหาความสัมพันธ์
+      const timeline = await sql`
+        SELECT 
+          a.id, 
+          a.note, 
+          a.viewed, -- (0=img/text, 1=video, 2=file, 3=audio)
+          a.photo, 
+          a.updated_on, 
+          a.status
+        FROM voice_attachment a
+        JOIN voice_message_photos mp ON a.id = mp.attachment_id
+        WHERE mp.message_id = ${foundCase.id}
+        ORDER BY a.updated_on ASC; -- เรียงตามลำดับเวลาที่เกิดขึ้น
       `;
 
       // -----------------------------------------------------
-      // STEP 3: รวมข้อมูลแล้วส่งกลับ
+      // STEP 3: รวมข้อมูลส่งกลับ
       // -----------------------------------------------------
-      // ยัดรูปที่เจอ ใส่เข้าไปใน field ชื่อ 'images' (เป็น Array)
       const resultData = {
         ...foundCase,
-        images: images // ส่งไปเป็น Array [] แม้จะมีรูปเดียวหรือไม่มีเลย
+        timeline: timeline // ส่งกลับเป็น Array ของเหตุการณ์ทั้งหมด
       };
 
       return new Response(JSON.stringify({ 
