@@ -123,7 +123,7 @@ export default async function handler(req, res) {
            roles: [{ role: "Member", tenant: "default" }]
         });
       } catch (e) {
-         console.error("Permit Sync Error:", e);
+        //  console.error("Permit Sync Error:", e);
          // [เพิ่ม] ส่ง Error กลับไปที่หน้าเว็บเพื่อดูสาเหตุ
          console.log("Permit Error Details:", JSON.stringify(e.response?.data, null, 2)); 
   
