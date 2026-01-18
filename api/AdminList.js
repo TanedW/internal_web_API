@@ -120,7 +120,7 @@ export default async function handler(req, res) {
         await permit.api.users.sync({
            key: String(newUser[0].admin_id),
            email: newUser[0].email,
-           roles: [{ role: "member", tenant: "default" }]
+           roles: [{ role: "Member", tenant: "default" }]
         });
       } catch (e) {
          console.error("Permit Sync Error:", e);
