@@ -128,7 +128,7 @@ export default async function handler(req, res) {
         // 2.2 กำหนด Role (แยกออกมาทำทีหลัง)
         await permit.api.users.assignRole({
             user: String(newUser[0].admin_id),
-            role: "member", // *** ตรวจสอบ Key ใน Permit: 'member' หรือ 'Member' ***
+            role: "Member", // *** ตรวจสอบ Key ใน Permit: 'member' หรือ 'Member' ***
             tenant: "default"
         });
 
