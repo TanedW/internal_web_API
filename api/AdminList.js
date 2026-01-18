@@ -125,11 +125,13 @@ export default async function handler(req, res) {
       } catch (e) {
          console.error("Permit Sync Error:", e);
          // [เพิ่ม] ส่ง Error กลับไปที่หน้าเว็บเพื่อดูสาเหตุ
-         return res.status(500).json({ 
+         console.log("Permit Error Details:", JSON.stringify(e.response?.data, null, 2)); 
+  
+          return res.status(500).json({ 
             message: 'Permit Sync Failed', 
-            error: e.message, 
-            details: e.response?.data // สำคัญ: ดูว่า Permit ตอบกลับมาว่าอะไร
-         });
+            error: e.message,
+            details: e.response?.data 
+          });
       }
 
       // Log
