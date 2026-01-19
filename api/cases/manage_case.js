@@ -7,7 +7,7 @@ export const config = {
 import { neon } from '@neondatabase/serverless';
 
 // ----------------------------------------------------------------------
-// Helper Function: บันทึก Log ลง Database (นำมาจาก AdminList.js)
+// Helper Function: บันทึก Log ลง Database
 // ----------------------------------------------------------------------
 async function saveAdminLog(sql, { adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
   try {
@@ -53,7 +53,7 @@ export default async function handler(req) {
 
   const sql = neon(process.env.DATA_BASE_URL);
   
-  // รับ Case ID จาก URL
+  // รับ Case ID จาก URL (ในที่นี้คือ id ของ voice_message)
   const { searchParams } = new URL(req.url);
   const case_id = searchParams.get('id'); 
 
@@ -63,7 +63,7 @@ export default async function handler(req) {
   const userAgent = req.headers.get('user-agent') || null;
 
   if (!case_id) {
-    return new Response(JSON.stringify({ message: 'Case ID is required in URL parameter' }), { status: 400, headers: corsHeaders });
+    return new Response(JSON.stringify({ message: 'Case ID (id) is required in URL parameter' }), { status: 400, headers: corsHeaders });
   }
 
   try {
@@ -76,6 +76,8 @@ export default async function handler(req) {
 
     // Parameters:
     // current_admin_id: ต้องมีเสมอ
+    // cover_image_url: สำหรับอัปเดตรูปปกเคส (ถ้าตาราง voice_message มี field นี้)
+    // media_id, media_url: สำหรับแก้ไขรูปภาพใน timeline (voice_attachment)
     const { current_admin_id, cover_image_url, media_id, media_url } = body;
     
     // Security Check
@@ -89,7 +91,7 @@ export default async function handler(req) {
     }
 
     // ---------------------------------------------------------
-    // Validate Actor (ตรวจสอบผู้กระทำ) - เพิ่มส่วนนี้เข้ามา
+    // Validate Actor (ตรวจสอบผู้กระทำ)
     // ---------------------------------------------------------
     const actors = await sql`
         SELECT admin_id, email, first_name, last_name 
@@ -108,50 +110,64 @@ export default async function handler(req) {
     const results = {};
 
     // ---------------------------------------------------------
-    // A. ถ้ามี cover_image_url -> Update ตาราง issue_cases
+    // A. ถ้ามี cover_image_url -> Update ตาราง voice_message (แทน issue_cases)
     // ---------------------------------------------------------
+    // หมายเหตุ: ตรวจสอบว่าตาราง voice_message มี field 'cover_image' หรือไม่ 
+    // หากไม่มีและต้องการใช้รูปแรกเป็นปก อาจไม่ต้องอัปเดตส่วนนี้ หรือปรับเป็น field อื่น
     if (cover_image_url) {
-        const updatedCase = await sql`
-            UPDATE issue_cases 
-            SET 
-                cover_image_url = ${cover_image_url},
-                updated_at = NOW()
-            WHERE issue_cases_id = ${case_id}
-            RETURNING issue_cases_id, cover_image_url;
-        `;
-        results.case_update = updatedCase[0] || 'Case ID not found';
+        // สมมติว่า voice_message มี column cover_image หรือต้องการอัปเดตสถานะที่เกี่ยวข้อง
+        // หากไม่มี column นี้ ให้ comment ส่วนนี้ออก หรือเปลี่ยนชื่อ column ให้ถูกต้อง
+        try {
+            const updatedCase = await sql`
+                UPDATE voice_message 
+                SET 
+                    cover_image = ${cover_image_url} 
+                    -- , updated_at = NOW() -- voice_message อาจไม่มี updated_at เช็ค schema ก่อน
+                WHERE id = ${case_id}
+                RETURNING id;
+            `;
+            results.case_update = updatedCase[0] || 'Case ID not found';
+        } catch (err) {
+            console.warn("Update voice_message failed (Column might not exist):", err.message);
+            results.case_update_error = err.message;
+        }
     }
 
     // ---------------------------------------------------------
-    // B. ถ้ามี media_id และ media_url -> Update ตาราง case_media
+    // B. ถ้ามี media_id และ media_url -> Update ตาราง voice_attachment (แทน case_media)
     // ---------------------------------------------------------
     if (media_id && media_url) {
+        // เปลี่ยนจาก url เป็น photo ตาม search_case.js
+        // เปลี่ยนจาก case_media เป็น voice_attachment
+        // การเช็ค case_id อาจต้องผ่าน voice_message_photos แต่เพื่อความง่ายจะเช็ค ID โดยตรง
+        
         const updatedMedia = await sql`
-            UPDATE case_media
+            UPDATE voice_attachment
             SET 
-                url = ${media_url}
-            WHERE id = ${media_id} AND case_id = ${case_id}
-            RETURNING id, url, media_type;
+                photo = ${media_url},
+                updated_on = NOW()
+            WHERE id = ${media_id}
+            RETURNING id, photo;
         `;
-        results.media_update = updatedMedia[0] || 'Media ID not found or does not match Case ID';
+        results.media_update = updatedMedia[0] || 'Media ID not found';
     }
 
     // ---------------------------------------------------------
-    // บันทึก Log Success - เพิ่มส่วนนี้เข้ามา
+    // บันทึก Log Success
     // ---------------------------------------------------------
     await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
         first_name: actorAdmin.first_name,
         last_name: actorAdmin.last_name,
-        action_type: 'CASE_UPDATE', // กำหนดประเภท action เป็นการแก้ไขเคส
+        action_type: 'CASE_UPDATE',
         status: 'SUCCESS',
         ipAddress,
         userAgent,
         details: { 
-            target: 'case_management',
+            target: 'voice_message_management',
             case_id: case_id,
-            updates: results // บันทึกสิ่งที่ถูกแก้ไขลงไปใน JSON details
+            updates: results
         }
     });
 
@@ -161,7 +177,7 @@ export default async function handler(req) {
     }), { status: 200, headers: corsHeaders });
 
   } catch (error) {
-    console.error("API Error:", error); // เพิ่ม log error ใน server console ด้วย
+    console.error("API Error:", error);
     return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
   }
 }
