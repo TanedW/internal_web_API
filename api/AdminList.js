@@ -28,7 +28,7 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
 }
 
 // ----------------------------------------------------------------------
-// Main Handler (Node.js Style)
+// Main Handler
 // ----------------------------------------------------------------------
 export default async function handler(req, res) {
   // 1. Setup CORS manually
@@ -53,12 +53,12 @@ export default async function handler(req, res) {
 
   try {
     // =================================================================
-    // GET: ดึงข้อมูล + เช็คสิทธิ์
+    // GET: ดึงข้อมูล + เช็คสิทธิ์ (ใช้สำหรับแสดงรายการ Admin)
     // =================================================================
     if (req.method === 'GET') {
       let canDelete = false;
 
-      // เช็คสิทธิ์กับ Permit
+      // เช็คสิทธิ์กับ Permit ว่าคนเรียก (requester_id) ลบ user ได้ไหม
       if (requester_id) {
          try {
            canDelete = await permit.check(String(requester_id), "delete", "Admin_Users");
@@ -88,14 +88,8 @@ export default async function handler(req, res) {
     if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
         const { current_admin_id } = body;
         
-        // ถ้าไม่มีใน body ให้ลองดูใน query (สำหรับ DELETE)
-        const checkId = current_admin_id; // หรือจะรับจาก query ก็ได้ถ้าต้องการ
-
-        // หมายเหตุ: สำหรับ POST (Add User) บางครั้งอาจจะเป็น Public Register หรือ Admin Add Admin
-        // ถ้าบังคับต้องมี current_admin_id เสมอ ให้เปิดบรรทัดนี้ไว้
-        // if (!checkId) return res.status(400).json({ message: 'current_admin_id is required' });
-        
-        if (checkId) {
+        // หมายเหตุ: ถ้าต้องการความปลอดภัยสูงควรเช็ค current_admin_id
+        if (checkId = current_admin_id) {
             const actors = await sql`SELECT * FROM admin_system WHERE admin_id = ${checkId}`;
             if (actors.length > 0) {
                 actorAdmin = actors[0];
@@ -104,20 +98,33 @@ export default async function handler(req, res) {
     }
 
     // =================================================================
-    // POST: เพิ่ม Admin ใหม่ + Sync Permit
+    // POST: เพิ่ม Admin ใหม่ + Sync Permit + Assign Role
     // =================================================================
     if (req.method === 'POST') {
-      const { email } = body;
+      // [UPDATED] รับค่า role จาก Frontend
+      const { email, role } = body; 
+      
       if (!email) return res.status(400).json({ message: 'Email required' });
+
+      // [UPDATED] ตรวจสอบ Role ที่ส่งมาว่าถูกต้องหรือไม่ (Whitelist)
+      const validRoles = [
+        'admin', 
+        'editor', 
+        'editor_manage_email', 
+        'editor_manage_case', 
+        'editor_manage_menu'
+      ];
+      // ถ้า role ที่ส่งมาไม่อยู่ใน list ให้ default เป็น 'editor'
+      const assignedRole = validRoles.includes(role) ? role : 'editor';
 
       // 1. Insert ลง DB ก่อน
       const newUser = await sql`
         INSERT INTO admin_system (email) VALUES (${email}) RETURNING *;
       `;
 
-      // 2. Sync กับ Permit.io (แยกขั้นตอน Sync และ Assign Role)
+      // 2. Sync กับ Permit.io
       try {
-        // 2.1 สร้าง User ใน Permit (ห้ามใส่ Role ตรงนี้)
+        // 2.1 สร้าง User ใน Permit
         await permit.api.users.sync({
            key: String(newUser[0].admin_id),
            email: newUser[0].email,
@@ -125,19 +132,17 @@ export default async function handler(req, res) {
            last_name: newUser[0].last_name || ""
         });
 
-        // 2.2 กำหนด Role (แยกออกมาทำทีหลัง)
+        // 2.2 กำหนด Role ตามที่เลือก (assignedRole)
         await permit.api.users.assignRole({
             user: String(newUser[0].admin_id),
-            role: "editor", // *** ตรวจสอบ Key ใน Permit: 'member' หรือ 'Member' ***
+            role: assignedRole, 
             tenant: "default"
         });
 
-        console.log(`Permit Sync & Assign Role Success for: ${newUser[0].email}`);
+        console.log(`Permit Sync & Assign Role (${assignedRole}) Success for: ${newUser[0].email}`);
 
       } catch (e) {
          console.error("Permit Sync Error:", e);
-         // ถ้า Sync ไม่ผ่าน อาจจะ return 500 หรือลบ User ที่เพิ่งสร้างใน DB ทิ้ง
-         // ในที่นี้ขอ return error ออกไปให้เห็นชัดๆ ช่วง debug
          return res.status(500).json({ 
             message: 'Permit Sync Failed', 
             error: e.message, 
@@ -145,12 +150,13 @@ export default async function handler(req, res) {
          });
       }
 
-      // 3. Log (ถ้า actorAdmin เป็น null แปลว่าเป็น self-register หรือระบบไม่ได้ส่ง current_admin_id มา)
+      // 3. Log
       if (actorAdmin) {
           await saveAdminLog(sql, {
             adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
             action_type: 'ADMIN_ADD', status: 'SUCCESS', ipAddress, userAgent,
-            details: { target: 'new_admin_created', new_id: newUser[0].admin_id, new_email: newUser[0].email }
+            // [UPDATED] บันทึก role ที่ assign ไปใน log details
+            details: { target: 'new_admin_created', new_id: newUser[0].admin_id, new_email: newUser[0].email, assigned_role: assignedRole }
           });
       }
 
@@ -173,8 +179,6 @@ export default async function handler(req, res) {
 
       if (updatedUser.length === 0) return res.status(404).json({ message: 'Not found' });
 
-      // Optional: ถ้าแก้ Email อาจต้อง Sync ไป Permit ด้วย (แล้วแต่ requirement)
-
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
         action_type: 'ADMIN_UPDATE', status: 'SUCCESS', ipAddress, userAgent,
@@ -191,7 +195,7 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ message: 'ID required' });
       if (!actorAdmin) return res.status(403).json({ message: 'Unauthorized action' });
 
-      // Check Permit
+      // Check Permit: เฉพาะ Admin (หรือ role ที่มีสิทธิ์ delete) เท่านั้นที่ผ่าน
       const isPermitted = await permit.check(String(actorAdmin.admin_id), "delete", "Admin_Users");
 
       if (!isPermitted) {
@@ -207,7 +211,7 @@ export default async function handler(req, res) {
 
       if (deletedUser.length === 0) return res.status(404).json({ message: 'Not found' });
 
-      // Optional: ควรลบ User ใน Permit ด้วย
+      // ลบ User ใน Permit ด้วย
       try {
          await permit.api.users.delete(String(id));
       } catch(e) {
