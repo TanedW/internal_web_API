@@ -7,7 +7,7 @@ export const config = {
 import { neon } from '@neondatabase/serverless';
 
 // ----------------------------------------------------------------------
-// Helper Function: บันทึก Log ลง Database (นำมาจาก AdminList.js)
+// Helper Function: บันทึก Log ลง Database
 // ----------------------------------------------------------------------
 async function saveAdminLog(sql, { adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
   try {
@@ -53,7 +53,7 @@ export default async function handler(req) {
 
   const sql = neon(process.env.DATA_BASE_URL);
   
-  // รับ Case ID จาก URL
+  // รับ Case ID จาก URL (message_id ของตาราง voice_message)
   const { searchParams } = new URL(req.url);
   const case_id = searchParams.get('id'); 
 
@@ -63,7 +63,7 @@ export default async function handler(req) {
   const userAgent = req.headers.get('user-agent') || null;
 
   if (!case_id) {
-    return new Response(JSON.stringify({ message: 'Case ID is required in URL parameter' }), { status: 400, headers: corsHeaders });
+    return new Response(JSON.stringify({ message: 'Case ID (message_id) is required in URL parameter' }), { status: 400, headers: corsHeaders });
   }
 
   try {
@@ -74,22 +74,23 @@ export default async function handler(req) {
       return new Response(JSON.stringify({ message: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
     }
 
-    // Parameters:
-    // current_admin_id: ต้องมีเสมอ
-    const { current_admin_id, cover_image_url, media_id, media_url } = body;
+    // ---------------------------------------------------------
+    // รับ Parameters ใหม่: photo_id และ file_url
+    // ---------------------------------------------------------
+    const { current_admin_id, photo_id, file_url } = body;
     
     // Security Check
     if (!current_admin_id) {
          return new Response(JSON.stringify({ message: 'Require current_admin_id' }), { status: 400, headers: corsHeaders });
     }
 
-    // Check ว่ามีการส่งค่ามาอัปเดตบ้างไหม
-    if (!cover_image_url && (!media_id || !media_url)) {
-        return new Response(JSON.stringify({ message: 'Nothing to update. Please provide cover_image_url OR (media_id AND media_url)' }), { status: 400, headers: corsHeaders });
+    // Validate เปลี่ยนชื่อตัวแปรที่เช็ค
+    if (!photo_id || !file_url) {
+        return new Response(JSON.stringify({ message: 'Require photo_id (attachment_id) and file_url to update.' }), { status: 400, headers: corsHeaders });
     }
 
     // ---------------------------------------------------------
-    // Validate Actor (ตรวจสอบผู้กระทำ) - เพิ่มส่วนนี้เข้ามา
+    // Validate Actor (ตรวจสอบผู้กระทำ)
     // ---------------------------------------------------------
     const actors = await sql`
         SELECT admin_id, email, first_name, last_name 
@@ -105,63 +106,57 @@ export default async function handler(req) {
     }
     const actorAdmin = actors[0];
 
-    const results = {};
+    // ---------------------------------------------------------
+    // Update Logic: อัปเดต voice_attachment
+    // ---------------------------------------------------------
+    
+    const updatedMedia = await sql`
+        UPDATE voice_attachment
+        SET 
+            photo = ${file_url},  -- ใช้ค่า file_url
+            updated_on = NOW()
+        WHERE id = ${photo_id}    -- ใช้ค่า photo_id
+        AND id IN (
+            SELECT attachment_id 
+            FROM voice_message_photos 
+            WHERE message_id = ${case_id}
+        )
+        RETURNING id, photo, updated_on;
+    `;
 
-    // ---------------------------------------------------------
-    // A. ถ้ามี cover_image_url -> Update ตาราง issue_cases
-    // ---------------------------------------------------------
-    if (cover_image_url) {
-        const updatedCase = await sql`
-            UPDATE issue_cases 
-            SET 
-                cover_image_url = ${cover_image_url},
-                updated_at = NOW()
-            WHERE issue_cases_id = ${case_id}
-            RETURNING issue_cases_id, cover_image_url;
-        `;
-        results.case_update = updatedCase[0] || 'Case ID not found';
+    if (updatedMedia.length === 0) {
+        return new Response(JSON.stringify({ 
+            message: 'Update failed. Photo ID not found or does not belong to this Case ID.' 
+        }), { status: 404, headers: corsHeaders });
     }
 
     // ---------------------------------------------------------
-    // B. ถ้ามี media_id และ media_url -> Update ตาราง case_media
-    // ---------------------------------------------------------
-    if (media_id && media_url) {
-        const updatedMedia = await sql`
-            UPDATE case_media
-            SET 
-                url = ${media_url}
-            WHERE id = ${media_id} AND case_id = ${case_id}
-            RETURNING id, url, media_type;
-        `;
-        results.media_update = updatedMedia[0] || 'Media ID not found or does not match Case ID';
-    }
-
-    // ---------------------------------------------------------
-    // บันทึก Log Success - เพิ่มส่วนนี้เข้ามา
+    // บันทึก Log Success
     // ---------------------------------------------------------
     await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
         first_name: actorAdmin.first_name,
         last_name: actorAdmin.last_name,
-        action_type: 'CASE_UPDATE', // กำหนดประเภท action เป็นการแก้ไขเคส
+        action_type: 'CASE_MEDIA_UPDATE',
         status: 'SUCCESS',
         ipAddress,
         userAgent,
         details: { 
-            target: 'case_management',
-            case_id: case_id,
-            updates: results // บันทึกสิ่งที่ถูกแก้ไขลงไปใน JSON details
+            target: 'voice_attachment',
+            case_id: case_id, 
+            attachment_id: photo_id, // บันทึกเป็นชื่อ field ใหม่ใน log
+            new_url: file_url        // บันทึกเป็นชื่อ field ใหม่ใน log
         }
     });
 
     return new Response(JSON.stringify({ 
         success: true, 
-        changes: results
+        data: updatedMedia[0]
     }), { status: 200, headers: corsHeaders });
 
   } catch (error) {
-    console.error("API Error:", error); // เพิ่ม log error ใน server console ด้วย
+    console.error("API Error:", error);
     return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
   }
 }
