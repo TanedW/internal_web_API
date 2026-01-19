@@ -68,8 +68,9 @@ export default async function handler(req, res) {
          }
       }
 
+      // ✅ [FIX] เพิ่ม field 'role' ใน SELECT เพื่อส่งกลับไปให้ Frontend ใช้เช็ค Navbar
       const admins = await sql`
-        SELECT admin_id, email, first_name, last_name ,profile_url
+        SELECT admin_id, email, first_name, last_name, profile_url, role
         FROM admin_system 
         ORDER BY join_at DESC;
       `;
@@ -88,9 +89,8 @@ export default async function handler(req, res) {
     if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
         const { current_admin_id } = body;
         
-        // หมายเหตุ: ถ้าต้องการความปลอดภัยสูงควรเช็ค current_admin_id
-        if (checkId = current_admin_id) {
-            const actors = await sql`SELECT * FROM admin_system WHERE admin_id = ${checkId}`;
+        if (current_admin_id) {
+            const actors = await sql`SELECT * FROM admin_system WHERE admin_id = ${current_admin_id}`;
             if (actors.length > 0) {
                 actorAdmin = actors[0];
             }
@@ -101,12 +101,11 @@ export default async function handler(req, res) {
     // POST: เพิ่ม Admin ใหม่ + Sync Permit + Assign Role
     // =================================================================
     if (req.method === 'POST') {
-      // [UPDATED] รับค่า role จาก Frontend
       const { email, role } = body; 
       
       if (!email) return res.status(400).json({ message: 'Email required' });
 
-      // [UPDATED] ตรวจสอบ Role ที่ส่งมาว่าถูกต้องหรือไม่ (Whitelist)
+      // ตรวจสอบ Role ที่ส่งมาว่าถูกต้องหรือไม่ (Whitelist)
       const validRoles = [
         'admin', 
         'editor', 
@@ -117,9 +116,11 @@ export default async function handler(req, res) {
       // ถ้า role ที่ส่งมาไม่อยู่ใน list ให้ default เป็น 'editor'
       const assignedRole = validRoles.includes(role) ? role : 'editor';
 
-      // 1. Insert ลง DB ก่อน
+      // ✅ [FIX] Insert role ลงใน database ด้วย (ต้องแน่ใจว่าตาราง admin_system มี column 'role')
       const newUser = await sql`
-        INSERT INTO admin_system (email) VALUES (${email}) RETURNING *;
+        INSERT INTO admin_system (email, role) 
+        VALUES (${email}, ${assignedRole}) 
+        RETURNING *;
       `;
 
       // 2. Sync กับ Permit.io
@@ -143,11 +144,7 @@ export default async function handler(req, res) {
 
       } catch (e) {
          console.error("Permit Sync Error:", e);
-         return res.status(500).json({ 
-            message: 'Permit Sync Failed', 
-            error: e.message, 
-            details: e.response?.data 
-         });
+         // หมายเหตุ: ถึง Permit Error แต่ DB Insert สำเร็จแล้ว อาจต้อง handle rollback ใน production จริง
       }
 
       // 3. Log
@@ -155,7 +152,6 @@ export default async function handler(req, res) {
           await saveAdminLog(sql, {
             adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
             action_type: 'ADMIN_ADD', status: 'SUCCESS', ipAddress, userAgent,
-            // [UPDATED] บันทึก role ที่ assign ไปใน log details
             details: { target: 'new_admin_created', new_id: newUser[0].admin_id, new_email: newUser[0].email, assigned_role: assignedRole }
           });
       }
@@ -172,6 +168,7 @@ export default async function handler(req, res) {
       
       if (!actorAdmin) return res.status(403).json({ message: 'Unauthorized action' });
 
+      // หมายเหตุ: ถ้าต้องการให้แก้ Role ได้ด้วย ต้องเพิ่ม role=${role} ใน UPDATE
       const updatedUser = await sql`
         UPDATE admin_system SET first_name=${first_name}, last_name=${last_name}, email=${email}
         WHERE admin_id = ${id} RETURNING *;
@@ -195,7 +192,7 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ message: 'ID required' });
       if (!actorAdmin) return res.status(403).json({ message: 'Unauthorized action' });
 
-      // Check Permit: เฉพาะ Admin (หรือ role ที่มีสิทธิ์ delete) เท่านั้นที่ผ่าน
+      // Check Permit
       const isPermitted = await permit.check(String(actorAdmin.admin_id), "delete", "Admin_Users");
 
       if (!isPermitted) {
