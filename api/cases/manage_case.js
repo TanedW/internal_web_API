@@ -53,25 +53,26 @@ export default async function handler(req) {
 
   const sql = neon(process.env.DATA_BASE_URL);
   
-  // รับ Case ID จาก URL
+  // 3. Prepare Request Data
   const { searchParams } = new URL(req.url);
   let case_id = searchParams.get('id'); 
 
-  // --- แก้ไขจุดที่ 1: Sanitize Case ID แบบเข้มงวด (Allow List) ---
-  // เก็บเฉพาะ a-z, A-Z, 0-9 และ - เท่านั้น เพื่อให้แน่ใจว่าเป็น UUID หรือ ID ที่สะอาดจริงๆ
+  // Capture IP & User Agent
+  const forwarded = req.headers.get('x-forwarded-for');
+  const ipAddress = forwarded ? forwarded.split(',')[0].trim() : 'unknown';
+  const userAgent = req.headers.get('user-agent') || 'unknown';
+
+  // Sanitize Case ID
   if (case_id) {
     case_id = case_id.replace(/[^a-zA-Z0-9-]/g, '');
   }
-
-  const forwarded = req.headers.get('x-forwarded-for');
-  const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
-  const userAgent = req.headers.get('user-agent') || null;
 
   if (!case_id) {
     return new Response(JSON.stringify({ message: 'Case ID is required in URL parameter' }), { status: 400, headers: corsHeaders });
   }
 
   try {
+    // 4. Parse Body
     let body = {};
     try {
       body = await req.json();
@@ -79,24 +80,22 @@ export default async function handler(req) {
       return new Response(JSON.stringify({ message: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
     }
 
-    const { current_admin_id, photo_id, file_url } = body;
+    // --- รับตัวแปร description เพิ่มตรงนี้ ---
+    const { current_admin_id, photo_id, file_url, description } = body;
     
+    // Validation
     if (!current_admin_id) {
          return new Response(JSON.stringify({ message: 'Require current_admin_id' }), { status: 400, headers: corsHeaders });
     }
-
     if (!photo_id || !file_url) {
         return new Response(JSON.stringify({ message: 'Require photo_id and file_url to update.' }), { status: 400, headers: corsHeaders });
     }
 
-    // --- แก้ไขจุดที่ 2: Sanitize photo_id แบบเข้มงวด ---
-    // ใช้ Regex เดียวกัน: /[^a-zA-Z0-9-]/g (ลบทุกอย่างที่ไม่ใช่ตัวเลข ตัวอักษร หรือขีดกลาง)
     const cleanPhotoId = photo_id.toString().replace(/[^a-zA-Z0-9-]/g, '');
 
-    // Debug Log (ดูใน Vercel Function Logs เพื่อเช็คค่า)
-    console.log(`Processing Update: CaseID=${case_id}, PhotoID=${cleanPhotoId}`);
-
-    // ตรวจสอบ Admin ผู้ทำรายการ
+    // ----------------------------------------------------------------------
+    // 5. Fetch Actor (ตรวจสอบ Admin ผู้ทำรายการ)
+    // ----------------------------------------------------------------------
     const actors = await sql`
         SELECT admin_id, email, first_name, last_name 
         FROM admin_system 
@@ -104,19 +103,20 @@ export default async function handler(req) {
     `;
 
     if (actors.length === 0) {
-        return new Response(JSON.stringify({ message: 'Current Admin not found' }), { status: 403, headers: corsHeaders });
+        return new Response(JSON.stringify({ message: 'Unauthorized: Admin not found' }), { status: 403, headers: corsHeaders });
     }
     const actorAdmin = actors[0];
 
     // ---------------------------------------------------------
-    // Update Logic
+    // 6. Update Logic
     // ---------------------------------------------------------
-    
     const updatedMedia = await sql`
         UPDATE voice_attachment
         SET 
             photo = ${file_url},
             updated_on = NOW()
+            -- ถ้าในตารางมี column description หรือ note ให้ Uncomment บรรทัดล่างครับ
+            --, description = ${description || null} 
         WHERE id = ${cleanPhotoId}  
         AND id IN (
             SELECT attachment_id 
@@ -127,15 +127,31 @@ export default async function handler(req) {
     `;
 
     if (updatedMedia.length === 0) {
-        // เพิ่ม Log กรณีหาไม่เจอ เพื่อช่วย Debug
-        console.warn(`Update Failed: Photo ID ${cleanPhotoId} not found or not linked to Case ${case_id}`);
-        
+        await saveAdminLog(sql, {
+            adminId: actorAdmin.admin_id,
+            email: actorAdmin.email,
+            first_name: actorAdmin.first_name,
+            last_name: actorAdmin.last_name,
+            action_type: 'CASE_MEDIA_UPDATE',
+            status: 'FAILED',
+            ipAddress,
+            userAgent,
+            details: { 
+                reason: 'Photo ID not found or mismatch case',
+                case_id: case_id, 
+                attachment_id: cleanPhotoId,
+                attempted_description: description // Log สิ่งที่พยายามบันทึกไว้ด้วย
+            }
+        });
+
         return new Response(JSON.stringify({ 
             message: 'Update failed. Photo ID not found or mismatch.' 
         }), { status: 404, headers: corsHeaders });
     }
 
-    // บันทึก Log ความสำเร็จ
+    // ---------------------------------------------------------
+    // 7. Save Success Log (บันทึกเหตุผลลงใน Log Details)
+    // ---------------------------------------------------------
     await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
@@ -149,8 +165,8 @@ export default async function handler(req) {
             target: 'voice_attachment',
             case_id: case_id, 
             attachment_id: cleanPhotoId,
-            new_url: file_url,       
-            attempted_description:description
+            new_url: file_url,
+            change_reason: description || "No reason provided" // <--- บันทึกเหตุผลลง Log ตรงนี้
         }
     });
 
@@ -161,6 +177,6 @@ export default async function handler(req) {
 
   } catch (error) {
     console.error("API Error:", error);
-    return new Response(JSON.stringify({ error: error.message, details: error }), { status: 500, headers: corsHeaders });
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
   }
 }
