@@ -57,9 +57,11 @@ export default async function handler(req) {
   const { searchParams } = new URL(req.url);
   let case_id = searchParams.get('id'); 
 
-  // --- แก้ไขจุดที่ 1: Sanitize Case ID (ลบ " หรือ ' ออกถ้ามีติดมา) ---
+// --- แก้ไขจุดที่ 1: เปลี่ยนวิธี Sanitize Case ID ให้เข้มงวดขึ้น ---
+  // เดิม: case_id = case_id.replace(/['"]+/g, '');
+  // ใหม่: เก็บเฉพาะ a-z, A-Z, 0-9 และ - เท่านั้น (กำจัด quotes, spaces, newline ทิ้งหมด)
   if (case_id) {
-    case_id = case_id.replace(/['"]+/g, '');
+    case_id = case_id.replace(/[^a-zA-Z0-9-]/g, '');
   }
 
   const forwarded = req.headers.get('x-forwarded-for');
@@ -90,7 +92,7 @@ export default async function handler(req) {
 
     // --- แก้ไขจุดที่ 2 (สำคัญมาก): Sanitize photo_id ---
     // บรรทัดนี้จะลบเครื่องหมายฟันหนูส่วนเกินออก ป้องกัน Error 500
-    const cleanPhotoId = photo_id.toString().replace(/['"]+/g, '');
+    const cleanPhotoId = photo_id.toString().replace(/[^a-zA-Z0-9-]/g, '');
 
     // ตรวจสอบ Admin ผู้ทำรายการ
     const actors = await sql`
@@ -108,6 +110,8 @@ export default async function handler(req) {
     // Update Logic
     // ---------------------------------------------------------
     
+    console.log("Sanitized IDs:", { case_id, cleanPhotoId });
+
     // สำคัญ: ตรงนี้ต้องใช้ตัวแปร cleanPhotoId ที่ทำความสะอาดแล้ว
     const updatedMedia = await sql`
         UPDATE voice_attachment
