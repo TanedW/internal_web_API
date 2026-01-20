@@ -11,6 +11,7 @@ import { neon } from '@neondatabase/serverless';
 // ----------------------------------------------------------------------
 async function saveAdminLog(sql, { adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
   try {
+    // แก้ไขจุดที่ 1: ใส่ ::text กัน Error กรณี IP หรือ UA เป็น Null
     await sql`
       INSERT INTO admin_system_logs 
       (admin_id, email, first_name, last_name, action_type, status, ip_address, user_agent, details)
@@ -21,8 +22,8 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
         ${last_name},     
         ${action_type}, 
         ${status}, 
-        ${ipAddress || null}, 
-        ${userAgent || null},
+        ${ipAddress || null}::text, 
+        ${userAgent || null}::text,
         ${details}
       );
     `;
@@ -41,38 +42,32 @@ const corsHeaders = {
 };
 
 export default async function handler(req) {
-  // 1. Preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
-  // 2. อนุญาตเฉพาะ PUT
   if (req.method !== 'PUT') {
-    return new Response(JSON.stringify({ message: 'Method not allowed. Only PUT is supported.' }), { status: 405, headers: corsHeaders });
+    return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
   }
 
   const sql = neon(process.env.DATA_BASE_URL);
   
-  // 3. Prepare Request Data
   const { searchParams } = new URL(req.url);
   let case_id = searchParams.get('id'); 
 
-  // Capture IP & User Agent
   const forwarded = req.headers.get('x-forwarded-for');
-  const ipAddress = forwarded ? forwarded.split(',')[0].trim() : 'unknown';
-  const userAgent = req.headers.get('user-agent') || 'unknown';
+  const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
+  const userAgent = req.headers.get('user-agent') || null;
 
-  // Sanitize Case ID
   if (case_id) {
     case_id = case_id.replace(/[^a-zA-Z0-9-]/g, '');
   }
 
   if (!case_id) {
-    return new Response(JSON.stringify({ message: 'Case ID is required in URL parameter' }), { status: 400, headers: corsHeaders });
+    return new Response(JSON.stringify({ message: 'Case ID is required' }), { status: 400, headers: corsHeaders });
   }
 
   try {
-    // 4. Parse Body
     let body = {};
     try {
       body = await req.json();
@@ -80,22 +75,15 @@ export default async function handler(req) {
       return new Response(JSON.stringify({ message: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
     }
 
-    // --- รับตัวแปร description เพิ่มตรงนี้ ---
     const { current_admin_id, photo_id, file_url, description } = body;
     
-    // Validation
-    if (!current_admin_id) {
-         return new Response(JSON.stringify({ message: 'Require current_admin_id' }), { status: 400, headers: corsHeaders });
-    }
-    if (!photo_id || !file_url) {
-        return new Response(JSON.stringify({ message: 'Require photo_id and file_url to update.' }), { status: 400, headers: corsHeaders });
+    if (!current_admin_id || !photo_id || !file_url) {
+         return new Response(JSON.stringify({ message: 'Missing required fields' }), { status: 400, headers: corsHeaders });
     }
 
     const cleanPhotoId = photo_id.toString().replace(/[^a-zA-Z0-9-]/g, '');
 
-    // ----------------------------------------------------------------------
-    // 5. Fetch Actor (ตรวจสอบ Admin ผู้ทำรายการ)
-    // ----------------------------------------------------------------------
+    // 1. ตรวจสอบ Admin
     const actors = await sql`
         SELECT admin_id, email, first_name, last_name 
         FROM admin_system 
@@ -107,16 +95,13 @@ export default async function handler(req) {
     }
     const actorAdmin = actors[0];
 
-    // ---------------------------------------------------------
-    // 6. Update Logic
-    // ---------------------------------------------------------
+    // 2. Update Logic (แก้ไขจุดสำคัญที่ทำให้เกิด Error $2)
     const updatedMedia = await sql`
         UPDATE voice_attachment
         SET 
             photo = ${file_url},
-            updated_on = NOW()
-            -- ถ้าในตารางมี column description หรือ note ให้ Uncomment บรรทัดล่างครับ
-            --, description = ${description || null} 
+            updated_on = NOW(),
+            description = ${description || null}::text  
         WHERE id = ${cleanPhotoId}  
         AND id IN (
             SELECT attachment_id 
@@ -125,6 +110,10 @@ export default async function handler(req) {
         )
         RETURNING id, photo, updated_on;
     `;
+
+    // ** คำอธิบายการแก้ไขด้านบน: **
+    // ใส่ ::text หลัง ${description || null} 
+    // เพื่อบอก Database ว่า "ถ้านี่เป็น Null ให้ถือว่าเป็น Null ของประเภท Text นะ ไม่ใช่ Unknown type"
 
     if (updatedMedia.length === 0) {
         await saveAdminLog(sql, {
@@ -139,8 +128,7 @@ export default async function handler(req) {
             details: { 
                 reason: 'Photo ID not found or mismatch case',
                 case_id: case_id, 
-                attachment_id: cleanPhotoId,
-                attempted_description: description // Log สิ่งที่พยายามบันทึกไว้ด้วย
+                attachment_id: cleanPhotoId
             }
         });
 
@@ -149,9 +137,7 @@ export default async function handler(req) {
         }), { status: 404, headers: corsHeaders });
     }
 
-    // ---------------------------------------------------------
-    // 7. Save Success Log (บันทึกเหตุผลลงใน Log Details)
-    // ---------------------------------------------------------
+    // 3. Save Success Log
     await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
@@ -166,7 +152,7 @@ export default async function handler(req) {
             case_id: case_id, 
             attachment_id: cleanPhotoId,
             new_url: file_url,
-            change_reason: description || "No reason provided" // <--- บันทึกเหตุผลลง Log ตรงนี้
+            change_reason: description || "No reason provided"
         }
     });
 
@@ -177,6 +163,7 @@ export default async function handler(req) {
 
   } catch (error) {
     console.error("API Error:", error);
+    // ส่ง Error กลับไปให้ Frontend เห็นชัดๆ
     return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
   }
 }
