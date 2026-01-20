@@ -149,7 +149,8 @@ export default async function handler(req) {
             target: 'voice_attachment',
             case_id: case_id, 
             attachment_id: cleanPhotoId,
-            new_url: file_url        
+            new_url: file_url,       
+            attempted_description:description
         }
     });
 
