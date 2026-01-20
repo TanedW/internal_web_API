@@ -57,9 +57,8 @@ export default async function handler(req) {
   const { searchParams } = new URL(req.url);
   let case_id = searchParams.get('id'); 
 
-// --- แก้ไขจุดที่ 1: เปลี่ยนวิธี Sanitize Case ID ให้เข้มงวดขึ้น ---
-  // เดิม: case_id = case_id.replace(/['"]+/g, '');
-  // ใหม่: เก็บเฉพาะ a-z, A-Z, 0-9 และ - เท่านั้น (กำจัด quotes, spaces, newline ทิ้งหมด)
+  // --- แก้ไขจุดที่ 1: Sanitize Case ID แบบเข้มงวด (Allow List) ---
+  // เก็บเฉพาะ a-z, A-Z, 0-9 และ - เท่านั้น เพื่อให้แน่ใจว่าเป็น UUID หรือ ID ที่สะอาดจริงๆ
   if (case_id) {
     case_id = case_id.replace(/[^a-zA-Z0-9-]/g, '');
   }
@@ -90,9 +89,12 @@ export default async function handler(req) {
         return new Response(JSON.stringify({ message: 'Require photo_id and file_url to update.' }), { status: 400, headers: corsHeaders });
     }
 
-    // --- แก้ไขจุดที่ 2 (สำคัญมาก): Sanitize photo_id ---
-    // บรรทัดนี้จะลบเครื่องหมายฟันหนูส่วนเกินออก ป้องกัน Error 500
+    // --- แก้ไขจุดที่ 2: Sanitize photo_id แบบเข้มงวด ---
+    // ใช้ Regex เดียวกัน: /[^a-zA-Z0-9-]/g (ลบทุกอย่างที่ไม่ใช่ตัวเลข ตัวอักษร หรือขีดกลาง)
     const cleanPhotoId = photo_id.toString().replace(/[^a-zA-Z0-9-]/g, '');
+
+    // Debug Log (ดูใน Vercel Function Logs เพื่อเช็คค่า)
+    console.log(`Processing Update: CaseID=${case_id}, PhotoID=${cleanPhotoId}`);
 
     // ตรวจสอบ Admin ผู้ทำรายการ
     const actors = await sql`
@@ -110,9 +112,6 @@ export default async function handler(req) {
     // Update Logic
     // ---------------------------------------------------------
     
-    console.log("Sanitized IDs:", { case_id, cleanPhotoId });
-
-    // สำคัญ: ตรงนี้ต้องใช้ตัวแปร cleanPhotoId ที่ทำความสะอาดแล้ว
     const updatedMedia = await sql`
         UPDATE voice_attachment
         SET 
@@ -128,6 +127,9 @@ export default async function handler(req) {
     `;
 
     if (updatedMedia.length === 0) {
+        // เพิ่ม Log กรณีหาไม่เจอ เพื่อช่วย Debug
+        console.warn(`Update Failed: Photo ID ${cleanPhotoId} not found or not linked to Case ${case_id}`);
+        
         return new Response(JSON.stringify({ 
             message: 'Update failed. Photo ID not found or mismatch.' 
         }), { status: 404, headers: corsHeaders });
@@ -146,7 +148,7 @@ export default async function handler(req) {
         details: { 
             target: 'voice_attachment',
             case_id: case_id, 
-            attachment_id: cleanPhotoId, // บันทึก ID ที่ถูกต้องลง Log
+            attachment_id: cleanPhotoId,
             new_url: file_url        
         }
     });
