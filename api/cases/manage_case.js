@@ -46,7 +46,7 @@ export default async function handler(req) {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
-  // 2. Allow only PUT
+  // 2. อนุญาตเฉพาะ PUT
   if (req.method !== 'PUT') {
     return new Response(JSON.stringify({ message: 'Method not allowed. Only PUT is supported.' }), { status: 405, headers: corsHeaders });
   }
@@ -57,18 +57,17 @@ export default async function handler(req) {
   const { searchParams } = new URL(req.url);
   let case_id = searchParams.get('id'); 
 
-  // --- FIX 1: Sanitize Case ID (ลบ " หรือ ' ออกถ้ามีติดมา) ---
+  // --- แก้ไขจุดที่ 1: Sanitize Case ID (ลบ " หรือ ' ออกถ้ามีติดมา) ---
   if (case_id) {
     case_id = case_id.replace(/['"]+/g, '');
   }
 
-  // ดึง IP และ User Agent สำหรับ Log
   const forwarded = req.headers.get('x-forwarded-for');
   const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
   const userAgent = req.headers.get('user-agent') || null;
 
   if (!case_id) {
-    return new Response(JSON.stringify({ message: 'Case ID (message_id) is required in URL parameter' }), { status: 400, headers: corsHeaders });
+    return new Response(JSON.stringify({ message: 'Case ID is required in URL parameter' }), { status: 400, headers: corsHeaders });
   }
 
   try {
@@ -79,27 +78,21 @@ export default async function handler(req) {
       return new Response(JSON.stringify({ message: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
     }
 
-    // ---------------------------------------------------------
-    // รับ Parameters
-    // ---------------------------------------------------------
     const { current_admin_id, photo_id, file_url } = body;
     
-    // Security Check
     if (!current_admin_id) {
          return new Response(JSON.stringify({ message: 'Require current_admin_id' }), { status: 400, headers: corsHeaders });
     }
 
     if (!photo_id || !file_url) {
-        return new Response(JSON.stringify({ message: 'Require photo_id (attachment_id) and file_url to update.' }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ message: 'Require photo_id and file_url to update.' }), { status: 400, headers: corsHeaders });
     }
 
-    // --- FIX 2: Sanitize photo_id (ลบ " หรือ ' ออกถ้ามีติดมา) ---
-    // ป้องกัน Error: invalid input syntax for type uuid: ""...""
+    // --- แก้ไขจุดที่ 2 (สำคัญมาก): Sanitize photo_id ---
+    // บรรทัดนี้จะลบเครื่องหมายฟันหนูส่วนเกินออก ป้องกัน Error 500
     const cleanPhotoId = photo_id.toString().replace(/['"]+/g, '');
 
-    // ---------------------------------------------------------
-    // Validate Actor (ตรวจสอบผู้กระทำ)
-    // ---------------------------------------------------------
+    // ตรวจสอบ Admin ผู้ทำรายการ
     const actors = await sql`
         SELECT admin_id, email, first_name, last_name 
         FROM admin_system 
@@ -107,24 +100,21 @@ export default async function handler(req) {
     `;
 
     if (actors.length === 0) {
-        return new Response(JSON.stringify({ message: 'Current Admin (Actor) not found in system' }), { 
-            status: 403, 
-            headers: corsHeaders 
-        });
+        return new Response(JSON.stringify({ message: 'Current Admin not found' }), { status: 403, headers: corsHeaders });
     }
     const actorAdmin = actors[0];
 
     // ---------------------------------------------------------
-    // Update Logic: อัปเดต voice_attachment
+    // Update Logic
     // ---------------------------------------------------------
     
-    // ใช้ cleanPhotoId ที่ทำความสะอาดแล้วแทนตัวแปร photo_id เดิม
+    // สำคัญ: ตรงนี้ต้องใช้ตัวแปร cleanPhotoId ที่ทำความสะอาดแล้ว
     const updatedMedia = await sql`
         UPDATE voice_attachment
         SET 
             photo = ${file_url},
             updated_on = NOW()
-        WHERE id = ${cleanPhotoId}    
+        WHERE id = ${cleanPhotoId}  
         AND id IN (
             SELECT attachment_id 
             FROM voice_message_photos 
@@ -135,13 +125,11 @@ export default async function handler(req) {
 
     if (updatedMedia.length === 0) {
         return new Response(JSON.stringify({ 
-            message: 'Update failed. Photo ID not found or does not belong to this Case ID.' 
+            message: 'Update failed. Photo ID not found or mismatch.' 
         }), { status: 404, headers: corsHeaders });
     }
 
-    // ---------------------------------------------------------
-    // บันทึก Log Success
-    // ---------------------------------------------------------
+    // บันทึก Log ความสำเร็จ
     await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
@@ -154,7 +142,7 @@ export default async function handler(req) {
         details: { 
             target: 'voice_attachment',
             case_id: case_id, 
-            attachment_id: cleanPhotoId, 
+            attachment_id: cleanPhotoId, // บันทึก ID ที่ถูกต้องลง Log
             new_url: file_url        
         }
     });
@@ -166,7 +154,6 @@ export default async function handler(req) {
 
   } catch (error) {
     console.error("API Error:", error);
-    // ส่ง Error กลับไปให้ชัดเจนขึ้น
     return new Response(JSON.stringify({ error: error.message, details: error }), { status: 500, headers: corsHeaders });
   }
 }
