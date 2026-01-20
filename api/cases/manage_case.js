@@ -53,9 +53,14 @@ export default async function handler(req) {
 
   const sql = neon(process.env.DATA_BASE_URL);
   
-  // รับ Case ID จาก URL (message_id ของตาราง voice_message)
+  // รับ Case ID จาก URL
   const { searchParams } = new URL(req.url);
-  const case_id = searchParams.get('id'); 
+  let case_id = searchParams.get('id'); 
+
+  // --- FIX 1: Sanitize Case ID (ลบ " หรือ ' ออกถ้ามีติดมา) ---
+  if (case_id) {
+    case_id = case_id.replace(/['"]+/g, '');
+  }
 
   // ดึง IP และ User Agent สำหรับ Log
   const forwarded = req.headers.get('x-forwarded-for');
@@ -75,7 +80,7 @@ export default async function handler(req) {
     }
 
     // ---------------------------------------------------------
-    // รับ Parameters ใหม่: photo_id และ file_url
+    // รับ Parameters
     // ---------------------------------------------------------
     const { current_admin_id, photo_id, file_url } = body;
     
@@ -84,10 +89,13 @@ export default async function handler(req) {
          return new Response(JSON.stringify({ message: 'Require current_admin_id' }), { status: 400, headers: corsHeaders });
     }
 
-    // Validate เปลี่ยนชื่อตัวแปรที่เช็ค
     if (!photo_id || !file_url) {
         return new Response(JSON.stringify({ message: 'Require photo_id (attachment_id) and file_url to update.' }), { status: 400, headers: corsHeaders });
     }
+
+    // --- FIX 2: Sanitize photo_id (ลบ " หรือ ' ออกถ้ามีติดมา) ---
+    // ป้องกัน Error: invalid input syntax for type uuid: ""...""
+    const cleanPhotoId = photo_id.toString().replace(/['"]+/g, '');
 
     // ---------------------------------------------------------
     // Validate Actor (ตรวจสอบผู้กระทำ)
@@ -110,12 +118,13 @@ export default async function handler(req) {
     // Update Logic: อัปเดต voice_attachment
     // ---------------------------------------------------------
     
+    // ใช้ cleanPhotoId ที่ทำความสะอาดแล้วแทนตัวแปร photo_id เดิม
     const updatedMedia = await sql`
         UPDATE voice_attachment
         SET 
-            photo = ${file_url},  -- ใช้ค่า file_url
+            photo = ${file_url},
             updated_on = NOW()
-        WHERE id = ${photo_id}    -- ใช้ค่า photo_id
+        WHERE id = ${cleanPhotoId}    
         AND id IN (
             SELECT attachment_id 
             FROM voice_message_photos 
@@ -145,8 +154,8 @@ export default async function handler(req) {
         details: { 
             target: 'voice_attachment',
             case_id: case_id, 
-            attachment_id: photo_id, // บันทึกเป็นชื่อ field ใหม่ใน log
-            new_url: file_url        // บันทึกเป็นชื่อ field ใหม่ใน log
+            attachment_id: cleanPhotoId, 
+            new_url: file_url        
         }
     });
 
@@ -157,6 +166,7 @@ export default async function handler(req) {
 
   } catch (error) {
     console.error("API Error:", error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+    // ส่ง Error กลับไปให้ชัดเจนขึ้น
+    return new Response(JSON.stringify({ error: error.message, details: error }), { status: 500, headers: corsHeaders });
   }
 }
