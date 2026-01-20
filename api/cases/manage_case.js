@@ -11,7 +11,6 @@ import { neon } from '@neondatabase/serverless';
 // ----------------------------------------------------------------------
 async function saveAdminLog(sql, { adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
   try {
-    // แก้ไขจุดที่ 1: ใส่ ::text กัน Error กรณี IP หรือ UA เป็น Null
     await sql`
       INSERT INTO admin_system_logs 
       (admin_id, email, first_name, last_name, action_type, status, ip_address, user_agent, details)
@@ -95,13 +94,13 @@ export default async function handler(req) {
     }
     const actorAdmin = actors[0];
 
-    // 2. Update Logic (แก้ไขจุดสำคัญที่ทำให้เกิด Error $2)
+    // 2. Update Logic (เอา description ออกจากตรงนี้ เพื่อไม่ให้ Error)
     const updatedMedia = await sql`
         UPDATE voice_attachment
         SET 
             photo = ${file_url},
-            updated_on = NOW(),
-            description = ${description || null}::text  
+            updated_on = NOW()
+            -- ลบบรรทัด description = ... ทิ้งไปเลย เพราะตารางนี้ไม่มี column นี้
         WHERE id = ${cleanPhotoId}  
         AND id IN (
             SELECT attachment_id 
@@ -110,10 +109,6 @@ export default async function handler(req) {
         )
         RETURNING id, photo, updated_on;
     `;
-
-    // ** คำอธิบายการแก้ไขด้านบน: **
-    // ใส่ ::text หลัง ${description || null} 
-    // เพื่อบอก Database ว่า "ถ้านี่เป็น Null ให้ถือว่าเป็น Null ของประเภท Text นะ ไม่ใช่ Unknown type"
 
     if (updatedMedia.length === 0) {
         await saveAdminLog(sql, {
@@ -137,7 +132,7 @@ export default async function handler(req) {
         }), { status: 404, headers: corsHeaders });
     }
 
-    // 3. Save Success Log
+    // 3. Save Success Log (บันทึก description ลงใน JSON details ของตาราง Log แทน)
     await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
@@ -152,7 +147,7 @@ export default async function handler(req) {
             case_id: case_id, 
             attachment_id: cleanPhotoId,
             new_url: file_url,
-            change_reason: description || "No reason provided"
+            change_reason: description || "No reason provided" // <--- อยู่ตรงนี้ครับ ถูกต้องตาม requirement
         }
     });
 
@@ -163,7 +158,6 @@ export default async function handler(req) {
 
   } catch (error) {
     console.error("API Error:", error);
-    // ส่ง Error กลับไปให้ Frontend เห็นชัดๆ
     return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
   }
 }
