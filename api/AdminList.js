@@ -9,7 +9,7 @@ const permit = new Permit({
   token: process.env.PERMIT_API_KEY,
 });
 
-// Helper: บันทึก Log (เหมือนเดิม)
+// Helper: บันทึก Log
 async function saveAdminLog(sql, { adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
   try {
     await sql`
@@ -41,7 +41,7 @@ export default async function handler(req, res) {
 
   try {
     // =================================================================
-    // GET: ดึงข้อมูล + ดึง Role สดๆ จาก Permit
+    // GET: ดึงข้อมูล + ดึง Roles (Array) สดๆ จาก Permit
     // =================================================================
     if (req.method === 'GET') {
       let canDelete = false;
@@ -55,43 +55,44 @@ export default async function handler(req, res) {
          }
       }
 
-      // 1. ดึง User จาก DB (❌ ไม่เอา column role แล้ว เพราะไม่มีใน DB)
+      // 1. ดึง User จาก DB
       const admins = await sql`
         SELECT admin_id, email, first_name, last_name, profile_url
         FROM admin_system 
         ORDER BY join_at DESC;
       `;
 
-      // 2. วนลูปถาม Permit ว่าแต่ละคนมี Role อะไร (Parallel Requests)
-      // วิธีนี้ Role จะแม่นยำตาม Permit เสมอ
+      // 2. วนลูปถาม Permit เพื่อดึง Role ทั้งหมด
       const adminsWithRoles = await Promise.all(admins.map(async (admin) => {
         try {
-            // ดึง Role ที่ Assign ไว้กับ User นี้จาก Permit
+            // ดึง Role ที่ Assign ไว้กับ User นี้ทั้งหมดจาก Permit
             const assignedRoles = await permit.api.users.getAssignedRoles({ 
                 user: String(admin.admin_id), 
                 tenant: "default" 
             });
 
-            // หา Role ที่เราสนใจ (ถ้ามีหลาย Role ให้หยิบตัวแรก หรือตัวที่ตรงเงื่อนไข)
-            const roleObj = assignedRoles.find(r => r.role); 
+            // ✅ CHANGED: Map เอา Role ทั้งหมดมาเป็น Array
+            const roles = assignedRoles.map(r => r.role); 
             
             return {
                 ...admin,
-                role: roleObj ? roleObj.role : 'editor' // ถ้าหาไม่เจอ Default เป็น editor
+                // ส่งกลับเป็น array เสมอ (ถ้าไม่มีให้ default เป็น editor)
+                roles: roles.length > 0 ? roles : ['editor'] 
             };
         } catch (error) {
             console.error(`Failed to fetch role for ${admin.email}:`, error);
-            return { ...admin, role: 'editor' }; // Fallback กรณี Permit Error
+            // Fallback กรณี Permit Error
+            return { ...admin, roles: ['editor'] }; 
         }
       }));
 
       return res.status(200).json({
-        data: adminsWithRoles, // ✅ ส่งข้อมูลที่มี Role แล้วกลับไป
+        data: adminsWithRoles, 
         meta: { can_delete: canDelete }
       });
     }
 
-    // ส่วนอื่นๆ (POST, PUT, DELETE) ...
+    // ส่วนอื่นๆ (POST, PUT, DELETE)
     const body = req.body || {};
     let actorAdmin = null;
     if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
@@ -109,10 +110,11 @@ export default async function handler(req, res) {
       const { email, role } = body; 
       if (!email) return res.status(400).json({ message: 'Email required' });
 
+      // แม้รับมาค่าเดียว แต่เราจะ Treat เป็น Array ตอน Return
       const validRoles = ['admin', 'editor', 'editor_manage_email', 'editor_manage_case', 'editor_manage_menu'];
       const assignedRole = validRoles.includes(role) ? role : 'editor';
 
-      // 1. Insert ลง DB (❌ ไม่เก็บ role ลง DB)
+      // 1. Insert ลง DB
       const newUser = await sql`
         INSERT INTO admin_system (email) VALUES (${email}) RETURNING *;
       `;
@@ -134,7 +136,6 @@ export default async function handler(req, res) {
 
       } catch (e) {
          console.error("Permit Sync Error:", e);
-         // อาจต้อง Handle กรณี Sync ไม่ผ่าน
       }
 
       if (actorAdmin) {
@@ -145,15 +146,14 @@ export default async function handler(req, res) {
           });
       }
 
-      // Return ข้อมูลกลับไปพร้อม Role เพื่อให้ Frontend แสดงผลทันที
-      return res.status(201).json({ ...newUser[0], role: assignedRole });
+      // ✅ CHANGED: Return เป็น roles array เพื่อให้ Frontend รับค่าไป display ต่อได้เลยโดยไม่ต้อง refresh
+      return res.status(201).json({ ...newUser[0], roles: [assignedRole] });
     }
 
     // =================================================================
     // PUT
     // =================================================================
     if (req.method === 'PUT') {
-        // ... (โค้ดเดิม) ...
         if (!id) return res.status(400).json({ message: 'ID required' });
         const { first_name, last_name, email } = body;
         
@@ -179,7 +179,6 @@ export default async function handler(req, res) {
     // DELETE
     // =================================================================
     if (req.method === 'DELETE') {
-        // ... (โค้ดเดิม) ...
         if (!id) return res.status(400).json({ message: 'ID required' });
         if (!actorAdmin) return res.status(403).json({ message: 'Unauthorized action' });
   
