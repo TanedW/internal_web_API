@@ -99,6 +99,7 @@ export default async function handler(req) {
         UPDATE voice_attachment
         SET 
             photo = ${file_url},
+            viewed = ${viewed}, 
             updated_on = NOW()
             -- ลบบรรทัด description = ... ทิ้งไปเลย เพราะตารางนี้ไม่มี column นี้
         WHERE id = ${cleanPhotoId}  
@@ -147,6 +148,7 @@ export default async function handler(req) {
             case_id: case_id, 
             attachment_id: cleanPhotoId,
             new_url: file_url,
+            new_type_code: viewed,
             change_reason: description || "No reason provided" // <--- อยู่ตรงนี้ครับ ถูกต้องตาม requirement
         }
     });
