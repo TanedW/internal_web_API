@@ -21,7 +21,7 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
         ${last_name},     
         ${action_type}, 
         ${status}, 
-        ${ipAddress || null}::text, 
+        ${ipAddress || null}::inet, 
         ${userAgent || null}::text,
         ${details}
       );
