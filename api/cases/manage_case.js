@@ -149,7 +149,7 @@ export default async function handler(req) {
             attachment_id: cleanPhotoId,
             new_url: file_url,
             new_type_code: viewed,
-            change_reason: description || "No reason provided" // <--- อยู่ตรงนี้ครับ ถูกต้องตาม requirement
+            description: description || "No reason provided" // <--- อยู่ตรงนี้ครับ ถูกต้องตาม requirement
         }
     });
 
