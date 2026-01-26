@@ -74,7 +74,7 @@ export default async function handler(req) {
       return new Response(JSON.stringify({ message: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
     }
 
-    const { current_admin_id, photo_id, file_url, description } = body;
+    const { current_admin_id, photo_id, file_url, description, viewed } = body;
     
     if (!current_admin_id || !photo_id || !file_url) {
          return new Response(JSON.stringify({ message: 'Missing required fields' }), { status: 400, headers: corsHeaders });
