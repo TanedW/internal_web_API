@@ -23,6 +23,7 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
         ${details}
       );
     `;
+    console.log("Admin log saved.");
   } catch (e) {
     console.error("Error saving admin log:", e);
   }
