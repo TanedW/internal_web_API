@@ -17,7 +17,10 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
       (admin_id, email, first_name, last_name, action_type, status, ip_address, user_agent, details)
       VALUES (
         ${adminId}, ${email}, ${first_name}, ${last_name},
-        ${action_type}, ${status}, ${ipAddress || null}, ${userAgent || null}, ${details}
+        ${action_type}, ${status}, 
+        ${ipAddress || null}::inet, 
+        ${userAgent || null}, 
+        ${details}
       );
     `;
   } catch (e) {
