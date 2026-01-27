@@ -1,4 +1,4 @@
-// api/cases/search_case.js
+// api/organization/search_org.js
 
 export const config = {
   runtime: 'edge',
