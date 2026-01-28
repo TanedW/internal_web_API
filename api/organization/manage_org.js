@@ -111,7 +111,7 @@ export default async function handler(req) {
             email: actorAdmin.email,
             first_name: actorAdmin.first_name,
             last_name: actorAdmin.last_name,
-            action_type: 'GROUP_UPDATE',
+            action_type: 'ORGANIZATION_UPDATE',
             status: 'FAILED',
             ipAddress,
             userAgent,
