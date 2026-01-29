@@ -143,7 +143,7 @@ export default async function handler(req) {
             new_url: file_url,
             old_name: old_name || null,
             old_url: old_url || null,
-            description: description || "Updated group info"
+            description: description || "เปลี่ยนข้อมูลหน่วยงาน"
         }
     });
 
