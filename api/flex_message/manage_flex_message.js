@@ -82,7 +82,7 @@ export default async function handler(req) {
 
     try {
       const body = await req.json();
-      const { current_admin_id, flex_name, flex_data, comment, quick_reply } = body;
+      const { current_admin_id, flex_name, flex_data, comment, quick_reply, description } = body;
 
       // 1. ตรวจสอบ Admin ผู้กระทำการ
       const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
@@ -130,7 +130,10 @@ export default async function handler(req) {
         userAgent,
         details: { 
           flex_id: updatedFlex[0].id, 
-          flex_name: updatedFlex[0].flex_name 
+          flex_name: updatedFlex[0].flex_name ,
+          description: description || "Updated group info"
+
+          
         }
       });
 
