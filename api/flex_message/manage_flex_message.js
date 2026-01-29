@@ -129,6 +129,7 @@ export default async function handler(req) {
         ipAddress,
         userAgent,
         details: { 
+          target: 'flex_message',
           flex_id: updatedFlex[0].id, 
           flex_name: updatedFlex[0].flex_name ,
           description: description || "Updated group info"
