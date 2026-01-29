@@ -52,7 +52,6 @@ export default async function handler(req) {
   const sql = neon(process.env.DATA_BASE_URL);
   
   const { searchParams } = new URL(req.url);
-  // เปลี่ยนจาก id (case) เป็น group_id เพื่อความชัดเจน
   let group_id = searchParams.get('id'); 
 
   const forwarded = req.headers.get('x-forwarded-for');
@@ -75,11 +74,10 @@ export default async function handler(req) {
       return new Response(JSON.stringify({ message: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
     }
 
-    // รับค่า name และ file_url (photo) จาก body
-    const { current_admin_id, name, file_url, description, old_name, old_url } = body;
+    const { current_admin_id, name, file_url, old_name, old_url } = body;
     
     if (!current_admin_id || (!name && !file_url)) {
-         return new Response(JSON.stringify({ message: 'Missing required fields (Admin ID and Name or Photo)' }), { status: 400, headers: corsHeaders });
+         return new Response(JSON.stringify({ message: 'Missing required fields' }), { status: 400, headers: corsHeaders });
     }
 
     // 1. ตรวจสอบ Admin
@@ -94,7 +92,33 @@ export default async function handler(req) {
     }
     const actorAdmin = actors[0];
 
-    // 2. Update Logic สำหรับตาราง voice_fonduegroup
+    // --- ส่วนที่ปรับปรุง: ตรวจสอบการเปลี่ยนแปลงเพื่อสร้าง Log ---
+    let logDetails = { 
+        target: 'voice_fonduegroup',
+        group_id: group_id 
+    };
+    let changeDescriptions = [];
+
+    // ตรวจสอบการเปลี่ยนชื่อ: บันทึกเฉพาะเมื่อชื่อใหม่ไม่ตรงกับชื่อเก่า
+    if (name && name !== old_name) {
+        logDetails.new_name = name;
+        logDetails.old_name = old_name;
+        changeDescriptions.push("เปลี่ยนชื่อ");
+    }
+
+    // ตรวจสอบการเปลี่ยนรูป: บันทึกเฉพาะเมื่อ URL ใหม่ไม่ตรงกับ URL เก่า
+    if (file_url && file_url !== old_url) {
+        logDetails.new_url = file_url;
+        logDetails.old_url = old_url;
+        changeDescriptions.push("เปลี่ยนรูป");
+    }
+
+    // กำหนด description ตามสิ่งที่เปลี่ยนจริง
+    logDetails.description = changeDescriptions.length > 0 
+        ? changeDescriptions.join(" และ ") 
+        : "ไม่มีการเปลี่ยนแปลงข้อมูล";
+
+    // 2. Update Logic
     const updatedGroup = await sql`
         UPDATE voice_fonduegroup
         SET 
@@ -115,18 +139,12 @@ export default async function handler(req) {
             status: 'FAILED',
             ipAddress,
             userAgent,
-            details: { 
-                reason: 'Group ID not found',
-                group_id: group_id
-            }
+            details: { reason: 'Group ID not found', group_id: group_id }
         });
-
-        return new Response(JSON.stringify({ 
-            message: 'Update failed. Group ID not found.' 
-        }), { status: 404, headers: corsHeaders });
+        return new Response(JSON.stringify({ message: 'Update failed. Group ID not found.' }), { status: 404, headers: corsHeaders });
     }
 
-    // 3. Save Success Log
+    // 3. บันทึก Success Log เฉพาะข้อมูลที่เปลี่ยนแปลง
     await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
@@ -136,15 +154,7 @@ export default async function handler(req) {
         status: 'SUCCESS',
         ipAddress,
         userAgent,
-        details: { 
-            target: 'voice_fonduegroup',
-            group_id: group_id, 
-            new_name: name,
-            new_url: file_url,
-            old_name: old_name || null,
-            old_url: old_url || null,
-            description: description || "เปลี่ยนข้อมูลหน่วยงาน"
-        }
+        details: logDetails
     });
 
     return new Response(JSON.stringify({ 
