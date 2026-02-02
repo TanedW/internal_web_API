@@ -180,43 +180,89 @@ export default async function handler(req, res) {
         return res.status(200).json(updatedUser[0]);
     }
 
-    // =================================================================
-    // DELETE
-    // =================================================================
-    if (req.method === 'DELETE') {
-        if (!id) return res.status(400).json({ message: 'ID required' });
-        if (!actorAdmin) return res.status(403).json({ message: 'Unauthorized action' });
+    // // =================================================================
+    // // DELETE
+    // // =================================================================
+    // if (req.method === 'DELETE') {
+    //     if (!id) return res.status(400).json({ message: 'ID required' });
+    //     if (!actorAdmin) return res.status(403).json({ message: 'Unauthorized action' });
   
-        // Check Permit
-        const isPermitted = await permit.check(String(actorAdmin.admin_id), "delete", "Admin_Users");
+    //     // Check Permit
+    //     const isPermitted = await permit.check(String(actorAdmin.admin_id), "delete", "Admin_Users");
   
-        if (!isPermitted) {
-          await saveAdminLog(sql, {
+    //     if (!isPermitted) {
+    //       await saveAdminLog(sql, {
+    //           adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
+    //           action_type: 'ADMIN_DELETE', status: 'FORBIDDEN', ipAddress, userAgent,
+    //           details: { message: 'Permission denied', target_id: id }
+    //       });
+    //       return res.status(403).json({ message: 'Forbidden: No permission to delete.' });
+    //     }
+  
+    //     const deletedUser = await sql`DELETE FROM admin_system WHERE admin_id = ${id} RETURNING *;`;
+  
+    //     if (deletedUser.length === 0) return res.status(404).json({ message: 'Not found' });
+  
+    //     try {
+    //        await permit.api.users.delete(String(id));
+    //     } catch(e) {
+    //        console.error("Failed to delete user in Permit:", e);
+    //     }
+  
+    //     await saveAdminLog(sql, {
+    //       adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
+    //       action_type: 'ADMIN_DELETE', status: 'SUCCESS', ipAddress, userAgent,
+    //       details: { target: 'admin_deleted', deleted_id: id, deleted_email: deletedUser[0].email }
+    //     });
+  
+    //     return res.status(200).json({ message: 'Deleted successfully' });
+    // }
+
+        // =================================================================
+        // DELETE (เปลี่ยนเป็น Soft Delete)
+        // =================================================================
+        if (req.method === 'DELETE') {
+            if (!id) return res.status(400).json({ message: 'ID required' });
+            if (!actorAdmin) return res.status(403).json({ message: 'Unauthorized action' });
+
+            // 1. Check Permission จาก Permit.io เหมือนเดิม
+            const isPermitted = await permit.check(String(actorAdmin.admin_id), "delete", "Admin_Users");
+
+            if (!isPermitted) {
+              await saveAdminLog(sql, {
+                  adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
+                  action_type: 'ADMIN_DELETE_SOFT', status: 'FORBIDDEN', ipAddress, userAgent,
+                  details: { message: 'Permission denied', target_id: id }
+              });
+              return res.status(403).json({ message: 'Forbidden: No permission to delete.' });
+            }
+
+            // 2. เปลี่ยนจาก DELETE เป็น UPDATE is_deleted = true
+            const deletedUser = await sql`
+              UPDATE admin_system 
+              SET is_deleted = true 
+              WHERE admin_id = ${id} 
+              RETURNING *;
+            `;
+
+            if (deletedUser.length === 0) return res.status(404).json({ message: 'Not found' });
+
+            // 3. จัดการกับ Permit (แนะนำให้ลบ User ออกจาก Permit เพื่อตัดสิทธิ์การเข้าถึงทันที)
+            try {
+              await permit.api.users.delete(String(id));
+            } catch(e) {
+              console.error("Failed to delete user in Permit:", e);
+            }
+
+            // 4. บันทึก Log
+            await saveAdminLog(sql, {
               adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
-              action_type: 'ADMIN_DELETE', status: 'FORBIDDEN', ipAddress, userAgent,
-              details: { message: 'Permission denied', target_id: id }
-          });
-          return res.status(403).json({ message: 'Forbidden: No permission to delete.' });
+              action_type: 'ADMIN_DELETE_SOFT', status: 'SUCCESS', ipAddress, userAgent,
+              details: { target: 'admin_soft_deleted', deleted_id: id, deleted_email: deletedUser[0].email }
+            });
+
+            return res.status(200).json({ message: 'User deactivated successfully' });
         }
-  
-        const deletedUser = await sql`DELETE FROM admin_system WHERE admin_id = ${id} RETURNING *;`;
-  
-        if (deletedUser.length === 0) return res.status(404).json({ message: 'Not found' });
-  
-        try {
-           await permit.api.users.delete(String(id));
-        } catch(e) {
-           console.error("Failed to delete user in Permit:", e);
-        }
-  
-        await saveAdminLog(sql, {
-          adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
-          action_type: 'ADMIN_DELETE', status: 'SUCCESS', ipAddress, userAgent,
-          details: { target: 'admin_deleted', deleted_id: id, deleted_email: deletedUser[0].email }
-        });
-  
-        return res.status(200).json({ message: 'Deleted successfully' });
-    }
 
     return res.status(405).json({ message: 'Method Not Allowed' });
 
