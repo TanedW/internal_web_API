@@ -56,7 +56,8 @@ export default async function handler(req) {
     try {
       const messages = await sql`
         SELECT id, flex_name, flex_data, comment, quick_reply, created_on, updated_on 
-        FROM public.flex_message 
+        FROM public.flex_message
+        WHERE is_deleted = false 
         ORDER BY updated_on DESC;
       `;
       
@@ -157,6 +158,43 @@ export default async function handler(req) {
       return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
     }
   }
+  // เพิ่ม Case ใหม่: DELETE
+if (req.method === 'DELETE') {
+  let flex_id = searchParams.get('id');
+  const body = await req.json();
+  const { current_admin_id } = body;
 
+  try {
+    // ตรวจสอบสิทธิ์ Admin
+    const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
+    if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
+    const actorAdmin = actors[0];
+
+    // ทำ Soft Delete โดยการ Update is_deleted = true
+    const deletedFlex = await sql`
+      UPDATE public.flex_message
+      SET 
+          is_deleted = true,
+          updated_on = NOW()
+      WHERE id = ${flex_id}
+      RETURNING id, flex_name;
+    `;
+
+    if (deletedFlex.length === 0) {
+      return new Response(JSON.stringify({ message: 'Data not found' }), { status: 404, headers: corsHeaders });
+    }
+
+    // บันทึก Log
+    await saveAdminLog(sql, {
+      adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
+      action_type: 'FLEX_MESSAGE_DELETE', status: 'SUCCESS', ipAddress, userAgent,
+      details: { target: 'flex_message', flex_id: deletedFlex[0].id, flex_name: deletedFlex[0].flex_name, note: "Soft deleted" }
+    });
+
+    return new Response(JSON.stringify({ success: true, message: "Deleted successfully" }), { status: 200, headers: corsHeaders });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+  }
+}
   return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
 }
