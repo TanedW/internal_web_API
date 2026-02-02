@@ -109,76 +109,79 @@ export default async function handler(req, res) {
     }
 
     // =================================================================
-    // POST
+    // POST: เพิ่ม User ใหม่ หรือ Reactivate User เก่า
     // =================================================================
     if (req.method === 'POST') {
       const { email, role } = body; 
       if (!email) return res.status(400).json({ message: 'Email required' });
 
-      // แม้รับมาค่าเดียว แต่เราจะ Treat เป็น Array ตอน Return
-      const validRoles = ['admin', 'editor', 'editor_manage_email', 'editor_manage_case', 'editor_manage_menu'];
+      const validRoles = ['admin', 'editor', 'editor_manage_email', 'editor_manage_case', 'editor_manage_menu', 'editor_manage_org'];
       const assignedRole = validRoles.includes(role) ? role : 'editor';
 
-      // 1. เช็คก่อนว่ามีอีเมลนี้อยู่ในระบบหรือยัง (รวมคนที่ถูกลบด้วย)
-      const existing = await sql`SELECT * FROM admin_system WHERE email = ${email} LIMIT 1`;
-      
-      let targetUser;
+      try {
+        // 1. เช็คก่อนว่ามีอีเมลนี้อยู่ในระบบหรือยัง (เว้นวรรคหน้า LIMIT)
+        const existing = await sql`SELECT * FROM admin_system WHERE email = ${email} LIMIT 1`;
+        
+        let targetUser;
 
-      if (existing.length > 0) {
-        const user = existing[0];
-          // --- กรณีที่ 1: มีอีเมลอยู่แล้ว -> ทำการ Reactivate ---
+        if (existing.length > 0) {
+          const user = existing[0];
+          
           if (user.is_deleted === false) {
-      // ✅ ถ้า is_deleted เป็น false ให้แจ้งเตือนว่ามีอยู่แล้ว
-      return res.status(400).json({ 
-        message: 'อีเมลนี้มีอยู่ในระบบและกำลังใช้งานอยู่แล้ว' 
-          });
+            // ถ้ายังใช้งานอยู่ ให้เตือน
+            return res.status(400).json({ message: 'อีเมลนี้มีอยู่ในระบบและกำลังใช้งานอยู่แล้ว' });
+          } else {
+            // ถ้าเคยถูกลบ (is_deleted = true) ให้คืนชีพ
+            const updated = await sql`
+              UPDATE admin_system 
+              SET is_deleted = false 
+              WHERE email = ${email} 
+              RETURNING *;
+            `;
+            targetUser = updated[0];
+          }
         } else {
-          // ✅ ถ้า is_deleted เป็น true ให้ทำการ "คืนชีพ" (Reactivate)
-          const updated = await sql`
-            UPDATE admin_system 
-            SET is_deleted = false 
-            WHERE email = ${email} 
-            RETURNING *;
-          `;
-          targetUser = updated[0];
-        }
-        } else {
-          // --- กรณีที่ 2: ไม่เคยมีอีเมลนี้เลย -> INSERT ใหม่ ---
+          // ถ้าไม่เคยมีเลย ให้ INSERT ใหม่
           const inserted = await sql`
             INSERT INTO admin_system (email) VALUES (${email}) RETURNING *;
           `;
           targetUser = inserted[0];
         }
 
-      // 2. Sync Permit + Assign Role
-      try {
-        await permit.api.users.sync({
-           key: String(targetUser.admin_id),
-           email: targetUser.email,
-           first_name: targetUser.first_name || "",
-           last_name: targetUser.last_name || ""
-        });
-
-        await permit.api.users.assignRole({
-            user: String(targetUser.admin_id),
-            role: assignedRole, 
-            tenant: "default"
-        });
-
-      } catch (e) {
-         console.error("Permit Sync Error:", e);
-      }
-
-      if (actorAdmin) {
-          await saveAdminLog(sql, {
-            adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
-            action_type: 'ADMIN_ADD', status: 'SUCCESS', ipAddress, userAgent,
-            details: { target: 'new_admin_created', new_id: targetUser.admin_id, new_email: targetUser.email, assigned_role: assignedRole }
+        // 2. Sync Permit + Assign Role
+        try {
+          await permit.api.users.sync({
+             key: String(targetUser.admin_id),
+             email: targetUser.email,
+             first_name: targetUser.first_name || "",
+             last_name: targetUser.last_name || ""
           });
-      }
 
-      // ✅ CHANGED: Return เป็น roles array เพื่อให้ Frontend รับค่าไป display ต่อได้เลยโดยไม่ต้อง refresh
-      return res.status(201).json({ ...targetUser, roles: [assignedRole] });
+          await permit.api.users.assignRole({
+              user: String(targetUser.admin_id),
+              role: assignedRole, 
+              tenant: "default"
+          });
+        } catch (e) {
+           console.error("Permit Sync Error:", e);
+        }
+
+        // บันทึก Log
+        if (actorAdmin) {
+            await saveAdminLog(sql, {
+              adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
+              action_type: 'ADMIN_ADD', status: 'SUCCESS', ipAddress, userAgent,
+              details: { target: 'admin_created_or_reactivated', new_id: targetUser.admin_id, new_email: targetUser.email, assigned_role: assignedRole }
+            });
+        }
+
+        // ✅ แก้ไขตรงนี้: ใช้ targetUser แทน newUser และไม่ต้องมี [0] เพราะเราดึงมาเป็น object แล้ว
+        return res.status(201).json({ ...targetUser, roles: [assignedRole] });
+
+      } catch (dbError) {
+        console.error("Database Error:", dbError);
+        return res.status(500).json({ message: 'Database Error', error: dbError.message });
+      }
     }
 
     // =================================================================
