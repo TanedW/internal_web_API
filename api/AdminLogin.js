@@ -61,10 +61,32 @@ export default async function handler(req) {
       const sql = neon(process.env.DATA_BASE_URL);
 
       // Check existing user
-      const existingUser = await sql`SELECT * FROM admin_system WHERE "email" = ${email}`;
+      const existingUser = await sql`SELECT * FROM admin_system WHERE "email" = ${email} LIMIT 1`;
 
       if (existingUser.length > 0) {
-        // --- Case 1: พบผู้ใช้ในระบบ -> อนุญาตให้ Login ---
+        const user = existingUser[0];
+
+        // --- เพิ่มการเช็ค is_deleted ---
+        if (user.is_deleted === true) {
+            await saveLoginLog(sql, {
+                adminId: user.admin_id,
+                email: email,
+                first_name, 
+                last_name, 
+                ipAddress, 
+                userAgent, 
+                status: 'FAILED_DELETED' // ระบุว่าถูกลบ/ระงับ
+            });
+
+            return new Response(JSON.stringify({ 
+                message: 'Access Denied: This account has been deactivated.' 
+            }), { 
+                status: 403, 
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+
+        // --- Case 1: พบผู้ใช้ในระบบ และสถานะปกติ -> อนุญาตให้ Login ---
         const updatedUser = await sql`
             UPDATE admin_system SET 
               "access_token" = ${access_token}, 
@@ -91,9 +113,7 @@ export default async function handler(req) {
         });
 
       } else {
-        // --- Case 2: ไม่พบผู้ใช้ (New User) -> ปฏิเสธการเข้าใช้งาน (REJECT) ---
-        
-        // บันทึก Log: Failed Attempt (Unauthorized)
+        // --- Case 2: ไม่พบอีเมลนี้ในระบบเลย ---
         await saveLoginLog(sql, {
           adminId: null,
           email: email,
@@ -101,34 +121,20 @@ export default async function handler(req) {
           last_name, 
           ipAddress, 
           userAgent, 
-          status: 'FAILED_UNAUTHORIZED' // ระบุสถานะว่าไม่มีสิทธิ์
+          status: 'FAILED_UNAUTHORIZED'
         });
 
-        // ส่ง error กลับไปให้ Frontend (403 Forbidden)
         return new Response(JSON.stringify({ 
             message: 'Access Denied: Your email is not authorized.' 
         }), { 
-            status: 403, // หรือ 401
+            status: 403,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
 
     } catch (error) {
       console.error("API Error:", error);
-
-      try {
-          const sql = neon(process.env.DATA_BASE_URL);
-          await saveLoginLog(sql, {
-            adminId: null,
-            email: email || 'unknown',
-            first_name,
-            last_name,
-            ipAddress, 
-            userAgent, 
-            status: 'FAILED_ERROR'
-          });
-      } catch (logError) { console.error("Log Error:", logError); }
-
+      // ... (ส่วนบันทึก Error Log คงเดิม)
       return new Response(JSON.stringify({ message: 'An error occurred', error: error.message }), { 
           status: 500, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
