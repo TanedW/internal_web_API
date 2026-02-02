@@ -108,8 +108,8 @@ export default async function handler(req, res) {
         }
     }
 
-    // =================================================================
-    // POST: เพิ่ม User ใหม่ หรือ Reactivate User เก่า
+// =================================================================
+    // POST: เพิ่ม User ใหม่, Reactivate หรือ อัปเดต Role ให้ User เดิม
     // =================================================================
     if (req.method === 'POST') {
       const { email, role } = body; 
@@ -119,19 +119,17 @@ export default async function handler(req, res) {
       const assignedRole = validRoles.includes(role) ? role : 'editor';
 
       try {
-        // 1. เช็คก่อนว่ามีอีเมลนี้อยู่ในระบบหรือยัง (เว้นวรรคหน้า LIMIT)
+        // 1. เช็คว่ามีอีเมลนี้อยู่ในระบบหรือไม่
         const existing = await sql`SELECT * FROM admin_system WHERE email = ${email} LIMIT 1`;
         
         let targetUser;
+        let actionStatus = 'ADMIN_ADD';
 
         if (existing.length > 0) {
-          const user = existing[0];
+          targetUser = existing[0];
           
-          if (user.is_deleted === false) {
-            // ถ้ายังใช้งานอยู่ ให้เตือน
-            return res.status(400).json({ message: 'อีเมลนี้มีอยู่ในระบบและกำลังใช้งานอยู่แล้ว' });
-          } else {
-            // ถ้าเคยถูกลบ (is_deleted = true) ให้คืนชีพ
+          if (targetUser.is_deleted === true) {
+            // กรณีเคยถูกลบ: ให้คืนชีพ (Reactivate)
             const updated = await sql`
               UPDATE admin_system 
               SET is_deleted = false 
@@ -139,16 +137,21 @@ export default async function handler(req, res) {
               RETURNING *;
             `;
             targetUser = updated[0];
+            actionStatus = 'ADMIN_REACTIVATE';
+          } else {
+            // กรณีมีอยู่ในระบบและใช้งานอยู่: เตรียมอัปเดต Role ใน Permit
+            actionStatus = 'ADMIN_UPDATE_ROLE';
           }
         } else {
-          // ถ้าไม่เคยมีเลย ให้ INSERT ใหม่
+          // กรณีไม่เคยมีข้อมูลเลย: INSERT ใหม่
           const inserted = await sql`
             INSERT INTO admin_system (email) VALUES (${email}) RETURNING *;
           `;
           targetUser = inserted[0];
+          actionStatus = 'ADMIN_CREATE_NEW';
         }
 
-        // 2. Sync Permit + Assign Role
+        // 2. Sync Permit + Assign Role (Permit จะจัดการ Overwrite หรือ Add Role ให้เอง)
         try {
           await permit.api.users.sync({
              key: String(targetUser.admin_id),
@@ -157,26 +160,36 @@ export default async function handler(req, res) {
              last_name: targetUser.last_name || ""
           });
 
+          // มอบหมาย Role ใหม่ (ใน Permit.io หนึ่ง User สามารถมีได้หลาย Roles)
           await permit.api.users.assignRole({
               user: String(targetUser.admin_id),
               role: assignedRole, 
               tenant: "default"
           });
         } catch (e) {
-           console.error("Permit Sync Error:", e);
+           console.error("Permit Sync/Assign Error:", e);
         }
 
-        // บันทึก Log
+        // 3. บันทึก Log ตาม Action ที่เกิดขึ้น
         if (actorAdmin) {
             await saveAdminLog(sql, {
               adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
-              action_type: 'ADMIN_ADD', status: 'SUCCESS', ipAddress, userAgent,
-              details: { target: 'admin_created_or_reactivated', new_id: targetUser.admin_id, new_email: targetUser.email, assigned_role: assignedRole }
+              action_type: actionStatus, status: 'SUCCESS', ipAddress, userAgent,
+              details: { 
+                target: 'admin_role_assigned', 
+                target_id: targetUser.admin_id, 
+                target_email: targetUser.email, 
+                assigned_role: assignedRole,
+                previous_status: existing.length > 0 ? (existing[0].is_deleted ? 'deleted' : 'active') : 'new'
+              }
             });
         }
 
-        // ✅ แก้ไขตรงนี้: ใช้ targetUser แทน newUser และไม่ต้องมี [0] เพราะเราดึงมาเป็น object แล้ว
-        return res.status(201).json({ ...targetUser, roles: [assignedRole] });
+        return res.status(200).json({ 
+          ...targetUser, 
+          message: actionStatus === 'ADMIN_UPDATE_ROLE' ? 'อัปเดตบทบาทเรียบร้อยแล้ว' : 'เพิ่มผู้ใช้งานเรียบร้อยแล้ว',
+          roles: [assignedRole] 
+        });
 
       } catch (dbError) {
         console.error("Database Error:", dbError);
