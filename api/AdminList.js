@@ -120,12 +120,20 @@ export default async function handler(req, res) {
       const assignedRole = validRoles.includes(role) ? role : 'editor';
 
       // 1. เช็คก่อนว่ามีอีเมลนี้อยู่ในระบบหรือยัง (รวมคนที่ถูกลบด้วย)
-      const existing = await sql`SELECT * FROM admin_system WHERE email = ${email}`;
+      const existing = await sql`SELECT * FROM admin_system WHERE email = ${email}LIMIT 1`;
       
       let targetUser;
 
       if (existing.length > 0) {
+        const user = existing[0];
           // --- กรณีที่ 1: มีอีเมลอยู่แล้ว -> ทำการ Reactivate ---
+          if (user.is_deleted === false) {
+      // ✅ ถ้า is_deleted เป็น false ให้แจ้งเตือนว่ามีอยู่แล้ว
+      return res.status(400).json({ 
+        message: 'อีเมลนี้มีอยู่ในระบบและกำลังใช้งานอยู่แล้ว' 
+          });
+        } else {
+          // ✅ ถ้า is_deleted เป็น true ให้ทำการ "คืนชีพ" (Reactivate)
           const updated = await sql`
             UPDATE admin_system 
             SET is_deleted = false 
@@ -133,6 +141,7 @@ export default async function handler(req, res) {
             RETURNING *;
           `;
           targetUser = updated[0];
+        }
         } else {
           // --- กรณีที่ 2: ไม่เคยมีอีเมลนี้เลย -> INSERT ใหม่ ---
           const inserted = await sql`
