@@ -120,7 +120,7 @@ export default async function handler(req, res) {
       const assignedRole = validRoles.includes(role) ? role : 'editor';
 
       // 1. เช็คก่อนว่ามีอีเมลนี้อยู่ในระบบหรือยัง (รวมคนที่ถูกลบด้วย)
-      const existing = await sql`SELECT * FROM admin_system WHERE email = ${email}LIMIT 1`;
+      const existing = await sql`SELECT * FROM admin_system WHERE email = ${email} LIMIT 1`;
       
       let targetUser;
 
@@ -178,7 +178,7 @@ export default async function handler(req, res) {
       }
 
       // ✅ CHANGED: Return เป็น roles array เพื่อให้ Frontend รับค่าไป display ต่อได้เลยโดยไม่ต้อง refresh
-      return res.status(201).json({ ...newUser[0], roles: [assignedRole] });
+      return res.status(201).json({ ...targetUser, roles: [assignedRole] });
     }
 
     // =================================================================
