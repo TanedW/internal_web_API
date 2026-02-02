@@ -63,6 +63,7 @@ export default async function handler(req, res) {
       const admins = await sql`
         SELECT admin_id, email, first_name, last_name, profile_url
         FROM admin_system 
+        WHERE is_deleted = false
         ORDER BY join_at DESC;
       `;
 
