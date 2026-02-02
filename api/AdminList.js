@@ -76,6 +76,8 @@ export default async function handler(req, res) {
                 tenant: "default" 
             });
 
+            console.log(assignedRoles)
+
             // ✅ CHANGED: Map เอา Role ทั้งหมดมาเป็น Array
             const roles = assignedRoles.map(r => r.role); 
             
