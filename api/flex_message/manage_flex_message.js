@@ -90,12 +90,12 @@ export default async function handler(req) {
       const newFlex = await sql`
         INSERT INTO public.flex_message (flex_name, flex_data, comment, quick_reply, created_on, updated_on)
         VALUES (
-            ${flex_name}, 
-            ${typeof flex_data === 'object' ? JSON.stringify(flex_data) : flex_data}, 
-            ${comment || null}, 
-            ${quick_reply || null}, 
-            NOW(), 
-            NOW()
+      ${flex_name}, 
+      ${typeof flex_data === 'object' ? JSON.stringify(flex_data) : flex_data}, 
+      ${comment || null}, 
+      ${typeof quick_reply === 'object' ? JSON.stringify(quick_reply) : quick_reply}, -- เพิ่มความชัวร์
+      NOW(), 
+      NOW()
         )
         RETURNING id, flex_name;
       `;
