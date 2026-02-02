@@ -115,7 +115,7 @@ export default async function handler(req, res) {
       const { email, role } = body; 
       if (!email) return res.status(400).json({ message: 'Email required' });
 
-      const validRoles = ['admin', 'editor', 'editor_manage_email', 'editor_manage_case', 'editor_manage_menu', 'editor_manage_org'];
+      const validRoles = ['admin', 'editor', 'editor_manage_user', 'editor_manage_case', 'editor_manage_menu', 'editor_manage_org_info'];
       const assignedRole = validRoles.includes(role) ? role : 'editor';
 
       try {
