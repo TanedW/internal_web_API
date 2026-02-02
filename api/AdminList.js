@@ -119,22 +119,39 @@ export default async function handler(req, res) {
       const validRoles = ['admin', 'editor', 'editor_manage_email', 'editor_manage_case', 'editor_manage_menu'];
       const assignedRole = validRoles.includes(role) ? role : 'editor';
 
-      // 1. Insert ลง DB
-      const newUser = await sql`
-        INSERT INTO admin_system (email) VALUES (${email}) RETURNING *;
-      `;
+      // 1. เช็คก่อนว่ามีอีเมลนี้อยู่ในระบบหรือยัง (รวมคนที่ถูกลบด้วย)
+      const existing = await sql`SELECT * FROM admin_system WHERE email = ${email}`;
+      
+      let targetUser;
+
+      if (existing.length > 0) {
+          // --- กรณีที่ 1: มีอีเมลอยู่แล้ว -> ทำการ Reactivate ---
+          const updated = await sql`
+            UPDATE admin_system 
+            SET is_deleted = false 
+            WHERE email = ${email} 
+            RETURNING *;
+          `;
+          targetUser = updated[0];
+        } else {
+          // --- กรณีที่ 2: ไม่เคยมีอีเมลนี้เลย -> INSERT ใหม่ ---
+          const inserted = await sql`
+            INSERT INTO admin_system (email) VALUES (${email}) RETURNING *;
+          `;
+          targetUser = inserted[0];
+        }
 
       // 2. Sync Permit + Assign Role
       try {
         await permit.api.users.sync({
-           key: String(newUser[0].admin_id),
-           email: newUser[0].email,
-           first_name: newUser[0].first_name || "",
-           last_name: newUser[0].last_name || ""
+           key: String(targetUser.admin_id),
+           email: targetUser.email,
+           first_name: targetUser.first_name || "",
+           last_name: targetUser.last_name || ""
         });
 
         await permit.api.users.assignRole({
-            user: String(newUser[0].admin_id),
+            user: String(targetUser.admin_id),
             role: assignedRole, 
             tenant: "default"
         });
@@ -147,7 +164,7 @@ export default async function handler(req, res) {
           await saveAdminLog(sql, {
             adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
             action_type: 'ADMIN_ADD', status: 'SUCCESS', ipAddress, userAgent,
-            details: { target: 'new_admin_created', new_id: newUser[0].admin_id, new_email: newUser[0].email, assigned_role: assignedRole }
+            details: { target: 'new_admin_created', new_id: targetUser.admin_id, new_email: targetUser.email, assigned_role: assignedRole }
           });
       }
 
