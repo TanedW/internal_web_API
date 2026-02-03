@@ -93,8 +93,7 @@ export default async function handler(req) {
       ${flex_name}, 
       ${typeof flex_data === 'object' ? JSON.stringify(flex_data) : flex_data}, 
       ${comment || null}, 
-      ${typeof quick_reply === 'object' ? JSON.stringify(quick_reply) : quick_reply}, -- เพิ่มความชัวร์
-      NOW(), 
+${quick_reply ? (typeof quick_reply === 'object' ? JSON.stringify(quick_reply) : quick_reply) : null},      NOW(), 
       NOW()
         )
         RETURNING id, flex_name;
