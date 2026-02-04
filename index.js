@@ -6,6 +6,10 @@ import cors from 'cors';
 import adminLoginHandler from './api/AdminLogin.js';
 import adminListHandler from './api/AdminList.js';
 import manageCaseHandler from './api/cases/manage_case.js'; 
+import searchCaseHandler from './api/cases/search_case.js';
+import manageFlexMessageHandler from './api/flex_message/manage_flex_message.js';
+import manageOrgHandler from './api/organization/manage_org.js';
+import searchOrgHandler from './api/organization/search_org.js';
 
 // --- ส่วนจัดการ Environment Variable ---
 // ถ้ามีตัวแปร DATA_BASE_URL (ของคุณ) ให้ก๊อปปี้ไปใส่ DATABASE_URL (มาตรฐาน)
@@ -82,6 +86,26 @@ app.all('/api/admin-list', (req, res) => {
 // 3. Manage Case
 app.all('/api/manage-case', (req, res) => {
     vercelAdapter(req, res, manageCaseHandler);
+});
+
+// 4. Search Case
+app.all('/api/search-case', (req, res) => {
+    vercelAdapter(req, res, searchCaseHandler);
+});
+
+// 5. Manage Flex Message
+app.all('/api/manage-flex-message', (req, res) => {
+    vercelAdapter(req, res, manageFlexMessageHandler);
+});
+
+// 6. Manage Org
+app.all('/api/manage-org', (req, res) => {
+    vercelAdapter(req, res, manageOrgHandler);
+});
+
+// 7. Search Org
+app.all('/api/search-org', (req, res) => {
+    vercelAdapter(req, res, searchOrgHandler);
 });
 
 // Route พื้นฐานเอาไว้เช็ค Server
