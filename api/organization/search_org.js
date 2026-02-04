@@ -38,19 +38,30 @@ export default async function handler(req) {
       // -----------------------------------------------------
       // ค้นหาข้อมูลจากตาราง voice_fonduegroup
       // -----------------------------------------------------
-      const groups = await sql`
-        SELECT 
-          id,
-          name,
-          photo,
-          created_on,
-          official_group
-        FROM voice_fonduegroup
-        WHERE 
-          ${isNumeric ? sql`id = ${parseInt(query)}` : sql`name ILIKE ${'%' + query + '%'}`}
-          AND deleted_at IS NULL
-        LIMIT 10; 
-      `;
+// แก้ไข Query ภายในไฟล์ search_org.js
+    const groups = await sql`
+      SELECT 
+        g.id,
+        g.name,
+        g.photo,
+        g.official_group,
+        -- ดึงข้อมูลจากตาราง codeclaim เป็น array ของ JSON
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', c.id,
+              'code', c.code,
+              'code_staff', c.code_staff
+            )
+          ) FILTER (WHERE c.id IS NOT NULL), '[]'
+        ) AS admin_codes
+      FROM voice_fonduegroup g
+      LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
+      WHERE 
+        ${isNumeric ? sql`g.id = ${parseInt(query)}` : sql`g.name ILIKE ${'%' + query + '%'}`}
+        AND g.deleted_at IS NULL
+      GROUP BY g.id;
+    `;
 
       if (groups.length === 0) {
         return new Response(JSON.stringify({ found: false, message: 'Group not found' }), {
