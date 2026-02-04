@@ -10,49 +10,83 @@ config:
   layout: dagre
 ---
 erDiagram
-    %% Admin System Tables
     admin_system {
-        int admin_id PK "Primary Key"
-        string email "Unique Email"
+        int admin_id PK
+        string email
         string first_name
         string last_name
         string profile_url
         string access_token
         timestamp join_at
+        boolean is_deleted
     }
 
     admin_system_logs {
         int id PK
-        int admin_id FK "References admin_system"
-        string action_type "Login, Add, Update, Delete"
-        string status "Success, Failed"
+        int admin_id FK
+        string action_type
+        string status
         string ip_address
         string user_agent
-        string email "Snapshot of email"
-        string first_name "Snapshot of name"
+        string email
+        string first_name
         string last_name
-        jsonb details "Extra info (target_id, etc.)"
+        jsonb details
         timestamp created_at
     }
 
-    %% Case Management Tables
-    issue_cases {
-        uuid issue_cases_id PK "Primary Key (UUID)"
-        string case_code "e.g., CASE-001"
-        string cover_image_url
-    }
-
-    case_media {
+    voice_message {
         int id PK
-        uuid case_id FK "References issue_cases"
-        string url
-        string media_type "image, video"
-        timestamp created_at
+        string ticket_id
+        string problem_type
+        string address
+        string status
+        string comment
+        timestamp timestamp
+        point location
     }
 
-    %% Relationships
-    admin_system ||--o{ admin_system_logs : "performs / logs"
-    issue_cases ||--o{ case_media : "contains"
+    voice_attachment {
+        int id PK
+        string note
+        int viewed
+        string photo
+        timestamp updated_on
+        string status
+    }
+
+    voice_message_photos {
+        int message_id PK, FK
+        int attachment_id PK, FK
+    }
+
+    flex_message {
+        int id PK
+        string flex_name
+        json flex_data
+        string comment
+        json quick_reply
+        timestamp created_on
+        timestamp updated_on
+        boolean is_deleted
+    }
+
+    voice_fonduegroup {
+        int id PK
+        string name
+        string photo
+        timestamp created_on
+        boolean official_group
+        timestamp deleted_at
+        timestamp updated_on
+    }
+
+    admin_system ||--o{ admin_system_logs : "logs"
+    voice_message ||--|{ voice_message_photos : "has"
+    voice_attachment ||--|{ voice_message_photos : "is"
+    admin_system ||--o{ flex_message : "manages"
+    admin_system ||--o{ voice_fonduegroup : "manages"
+    admin_system ||--o{ voice_message : "manages"
 ```
 
 ## API Endpoints
