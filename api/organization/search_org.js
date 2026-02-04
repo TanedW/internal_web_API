@@ -38,29 +38,32 @@ export default async function handler(req) {
       // -----------------------------------------------------
       // ค้นหาข้อมูลจากตาราง voice_fonduegroup
       // -----------------------------------------------------
-// แก้ไข Query ภายในไฟล์ search_org.js
-    const groups = await sql`
-      SELECT 
-        g.id,
-        g.name,
-        g.photo,
-        g.official_group,
-        -- ดึงข้อมูลจากตาราง codeclaim เป็น array ของ JSON
-        COALESCE(
-          json_agg(
-            json_build_object(
-              'id', c.id,
-              'code', c.code,
-              'code_staff', c.code_staff
-            )
-          ) FILTER (WHERE c.id IS NOT NULL), '[]'
-        ) AS admin_codes
-      FROM voice_fonduegroup g
-      LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
-      WHERE 
-        ${isNumeric ? sql`g.id = ${parseInt(query)}` : sql`g.name ILIKE ${'%' + query + '%'}`}
-        AND g.deleted_at IS NULL
-      GROUP BY g.id;
+const groups = await sql`
+  SELECT 
+    g.id,
+    g.name,
+    g.photo,
+    g.official_group,
+    -- ถ้า deleted_at เป็น null ให้บอกว่า 'active' ถ้ามีค่าให้ส่ง timestamp ออกไป
+    CASE 
+      WHEN g.deleted_at IS NULL THEN 'active' 
+      ELSE g.deleted_at::text 
+    END AS status,
+    g.deleted_at, -- ส่งค่า raw ไปด้วยเพื่อให้ Frontend จัดการ format ได้ง่าย
+    COALESCE(
+      json_agg(
+        json_build_object(
+          'id', c.id,
+          'code', c.code,
+          'code_staff', c.code_staff
+        )
+      ) FILTER (WHERE c.id IS NOT NULL), '[]'
+    ) AS admin_codes
+  FROM voice_fonduegroup g
+  LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
+  WHERE 
+    ${isNumeric ? sql`g.id = ${parseInt(query)}` : sql`g.name ILIKE ${'%' + query + '%'}`}
+  GROUP BY g.id;
     `;
 
       if (groups.length === 0) {
