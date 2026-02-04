@@ -41,6 +41,7 @@ const corsHeaders = {
 };
 
 export default async function handler(req) {
+  // 1. Handle CORS Preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
@@ -62,16 +63,20 @@ export default async function handler(req) {
   }
 
   // ----------------------------------------------------------------------
-  // CASE: SOFT DELETE (DELETE Method)
+  // CASE: SOFT DELETE (Method DELETE)
   // ----------------------------------------------------------------------
   if (req.method === 'DELETE') {
     try {
       const { current_admin_id } = await req.json();
 
-      const actors = await sql`SELECT * FROM admin_system WHERE admin_id = ${current_admin_id}`;
-      if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
+      // ตรวจสอบ Admin
+      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
+      if (actors.length === 0) {
+        return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
+      }
       const actorAdmin = actors[0];
 
+      // ทำ Soft Delete
       const deletedGroup = await sql`
         UPDATE voice_fonduegroup
         SET deleted_at = NOW(), updated_on = NOW()
@@ -79,7 +84,9 @@ export default async function handler(req) {
         RETURNING id, name, deleted_at;
       `;
 
-      if (deletedGroup.length === 0) return new Response(JSON.stringify({ message: 'Not found' }), { status: 404, headers: corsHeaders });
+      if (deletedGroup.length === 0) {
+        return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
+      }
 
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
@@ -92,38 +99,49 @@ export default async function handler(req) {
         details: { group_id, action: 'soft_delete', name: deletedGroup[0].name }
       });
 
-      return new Response(JSON.stringify({ success: true, data: deletedGroup[0] }), { status: 200, headers: corsHeaders });
+      return new Response(JSON.stringify({ 
+        success: true, 
+        message: 'Soft deleted successfully',
+        status: deletedGroup[0].deleted_at 
+      }), { status: 200, headers: corsHeaders });
+
     } catch (error) {
       return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
     }
   }
 
   // ----------------------------------------------------------------------
-  // CASE: UPDATE & RESTORE (PUT Method)
+  // CASE: UPDATE & RESTORE (Method PUT)
   // ----------------------------------------------------------------------
   if (req.method === 'PUT') {
     try {
       const body = await req.json();
       const { current_admin_id, name, file_url, old_name, old_url, restore } = body;
 
-      const actors = await sql`SELECT * FROM admin_system WHERE admin_id = ${current_admin_id}`;
-      if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
+      // ตรวจสอบ Admin
+      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
+      if (actors.length === 0) {
+        return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
+      }
       const actorAdmin = actors[0];
 
-      // Logic: ถ้าส่ง restore: true มา ให้ล้างค่า deleted_at เป็น NULL
+      // Update Logic (แก้ไข Syntax: เปลี่ยน === เป็น = สำหรับ SQL)
       const updatedGroup = await sql`
         UPDATE voice_fonduegroup
         SET 
             name = COALESCE(${name}, name),
             photo = COALESCE(${file_url}, photo),
-            deleted_at = CASE WHEN ${restore} === true THEN NULL ELSE deleted_at END,
+            deleted_at = CASE WHEN ${restore} = true THEN NULL ELSE deleted_at END,
             updated_on = NOW()
         WHERE id = ${group_id}
         RETURNING id, name, photo, deleted_at, updated_on;
       `;
 
-      if (updatedGroup.length === 0) return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
+      if (updatedGroup.length === 0) {
+        return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
+      }
 
+      // บันทึก Log
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
@@ -132,7 +150,11 @@ export default async function handler(req) {
         action_type: restore ? 'GROUP_RESTORE' : 'GROUP_UPDATE',
         status: 'SUCCESS',
         ipAddress, userAgent,
-        details: { group_id, restore_action: !!restore }
+        details: { 
+          group_id, 
+          is_restore: !!restore,
+          changes: { name: name !== old_name, photo: file_url !== old_url }
+        }
       });
 
       return new Response(JSON.stringify({ 
@@ -146,5 +168,6 @@ export default async function handler(req) {
     }
   }
 
+  // กรณี Method อื่นๆ
   return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
 }

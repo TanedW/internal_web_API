@@ -1,4 +1,4 @@
-// api/manage_org.js
+// api/manage_case.js
 
 export const config = {
   runtime: 'edge',
@@ -45,7 +45,6 @@ export default async function handler(req) {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
-  // ปรับปรุงให้รับทั้ง PUT (Update/Restore) และอาจจะเผื่อ DELETE (Soft Delete)
   if (req.method !== 'PUT') {
     return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
   }
@@ -53,18 +52,18 @@ export default async function handler(req) {
   const sql = neon(process.env.DATA_BASE_URL);
   
   const { searchParams } = new URL(req.url);
-  let group_id = searchParams.get('id'); 
+  let case_id = searchParams.get('id'); 
 
   const forwarded = req.headers.get('x-forwarded-for');
   const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
   const userAgent = req.headers.get('user-agent') || null;
 
-  if (group_id) {
-    group_id = group_id.replace(/[^a-zA-Z0-9-]/g, '');
+  if (case_id) {
+    case_id = case_id.replace(/[^a-zA-Z0-9-]/g, '');
   }
 
-  if (!group_id) {
-    return new Response(JSON.stringify({ message: 'Group ID is required' }), { status: 400, headers: corsHeaders });
+  if (!case_id) {
+    return new Response(JSON.stringify({ message: 'Case ID is required' }), { status: 400, headers: corsHeaders });
   }
 
   try {
@@ -75,12 +74,13 @@ export default async function handler(req) {
       return new Response(JSON.stringify({ message: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
     }
 
-    // รับค่า is_deleted เพื่อใช้ทำ Soft Delete หรือ Restore
-    const { current_admin_id, name, file_url, old_name, old_url, is_deleted } = body;
+    const { current_admin_id, photo_id, file_url, description, viewed, old_url } = body;
     
-    if (!current_admin_id) {
-         return new Response(JSON.stringify({ message: 'Missing current_admin_id' }), { status: 400, headers: corsHeaders });
+    if (!current_admin_id || !photo_id || !file_url) {
+         return new Response(JSON.stringify({ message: 'Missing required fields' }), { status: 400, headers: corsHeaders });
     }
+
+    const cleanPhotoId = photo_id.toString().replace(/[^a-zA-Z0-9-]/g, '');
 
     // 1. ตรวจสอบ Admin
     const actors = await sql`
@@ -94,81 +94,69 @@ export default async function handler(req) {
     }
     const actorAdmin = actors[0];
 
-    // --- ส่วนที่ปรับปรุง: เตรียม Log Details ---
-    let logDetails = { 
-        target: 'voice_fonduegroup',
-        group_id: group_id 
-    };
-    let changeDescriptions = [];
-
-    if (name && name !== old_name) {
-        logDetails.new_name = name;
-        logDetails.old_name = old_name;
-        changeDescriptions.push("เปลี่ยนชื่อ");
-    }
-    if (file_url && file_url !== old_url) {
-        logDetails.new_url = file_url;
-        logDetails.old_url = old_url;
-        changeDescriptions.push("เปลี่ยนรูป");
-    }
-
-    // เช็คสถานะการ Delete/Restore เพื่อลง Log
-    if (is_deleted === true) changeDescriptions.push("ลบหน่วยงาน (Soft Delete)");
-    if (is_deleted === false) changeDescriptions.push("กู้คืนหน่วยงาน (Restore)");
-
-    logDetails.description = changeDescriptions.length > 0 
-        ? changeDescriptions.join(" และ ") 
-        : "ปรับปรุงข้อมูลทั่วไป";
-
-    // 2. Update Logic (Reactive)
-    // ใช้ CASE ใน SQL เพื่อสลับค่า deleted_at ตาม is_deleted ที่ส่งมา
-    const updatedGroup = await sql`
-        UPDATE voice_fonduegroup
+    // 2. Update Logic (เอา description ออกจากตรงนี้ เพื่อไม่ให้ Error)
+    const updatedMedia = await sql`
+        UPDATE voice_attachment
         SET 
-            name = COALESCE(${name}, name),
-            photo = COALESCE(${file_url}, photo),
-            updated_on = NOW(),
-            deleted_at = CASE 
-                WHEN ${is_deleted} === true THEN NOW()
-                WHEN ${is_deleted} === false THEN NULL
-                ELSE deleted_at 
-            END
-        WHERE id = ${group_id}
-        RETURNING id, name, photo, deleted_at, updated_on;
+            photo = ${file_url},
+            viewed = ${viewed}, 
+            updated_on = NOW()
+            -- ลบบรรทัด description = ... ทิ้งไปเลย เพราะตารางนี้ไม่มี column นี้
+        WHERE id = ${cleanPhotoId}  
+        AND id IN (
+            SELECT attachment_id 
+            FROM voice_message_photos 
+            WHERE message_id = ${case_id}
+        )
+        RETURNING id, photo, updated_on;
     `;
 
-    if (updatedGroup.length === 0) {
+    if (updatedMedia.length === 0) {
         await saveAdminLog(sql, {
             adminId: actorAdmin.admin_id,
             email: actorAdmin.email,
             first_name: actorAdmin.first_name,
             last_name: actorAdmin.last_name,
-            action_type: 'ORGANIZATION_UPDATE',
+            action_type: 'CASE_MEDIA_UPDATE',
             status: 'FAILED',
             ipAddress,
             userAgent,
-            details: { reason: 'Group ID not found', group_id: group_id }
+            details: { 
+                reason: 'Photo ID not found or mismatch case',
+                case_id: case_id, 
+                attachment_id: cleanPhotoId
+            }
         });
-        return new Response(JSON.stringify({ message: 'Update failed. Group ID not found.' }), { status: 404, headers: corsHeaders });
+
+        return new Response(JSON.stringify({ 
+            message: 'Update failed. Photo ID not found or mismatch.' 
+        }), { status: 404, headers: corsHeaders });
     }
 
-    // 3. บันทึก Success Log
+    // 3. Save Success Log (บันทึก description ลงใน JSON details ของตาราง Log แทน)
     await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
         first_name: actorAdmin.first_name,
         last_name: actorAdmin.last_name,
-        action_type: is_deleted === true ? 'GROUP_DELETE' : 'GROUP_UPDATE',
+        action_type: 'CASE_MEDIA_UPDATE',
         status: 'SUCCESS',
         ipAddress,
         userAgent,
-        details: logDetails
+        details: { 
+            target: 'voice_attachment',
+            case_id: case_id, 
+            attachment_id: cleanPhotoId,
+            new_url: file_url,
+            new_type_code: viewed,
+            old_url: old_url || null, // <--- เพิ่มบรรทัดนี้เพื่อเก็บ URL เก่า
+            description: description || "No reason provided" // <--- อยู่ตรงนี้ครับ ถูกต้องตาม requirement
+        }
     });
 
     return new Response(JSON.stringify({ 
         success: true, 
-        data: updatedGroup[0],
-        status: updatedGroup[0].deleted_at === null ? 'active' : updatedGroup[0].deleted_at
+        data: updatedMedia[0]
     }), { status: 200, headers: corsHeaders });
 
   } catch (error) {
