@@ -46,7 +46,8 @@ const groups = await sql`
     g.official_group,
     -- ถ้า deleted_at เป็น null ให้บอกว่า 'active' ถ้ามีค่าให้ส่ง timestamp ออกไป
     CASE 
-      WHEN g.deleted_at IS NULL THEN 'active' 
+      WHEN g.deleted_at IS NULL THEN 'active'
+      WHEN g.deleted_at IS NOT NULL THEN 'deleted' 
       ELSE g.deleted_at::text 
     END AS status,
     g.deleted_at, -- ส่งค่า raw ไปด้วยเพื่อให้ Frontend จัดการ format ได้ง่าย
