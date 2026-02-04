@@ -36,7 +36,7 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
 // ----------------------------------------------------------------------
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'PUT, OPTIONS',
+  'Access-Control-Allow-Methods': 'PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
@@ -45,12 +45,7 @@ export default async function handler(req) {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
-  if (req.method !== 'PUT') {
-    return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
-  }
-
   const sql = neon(process.env.DATA_BASE_URL);
-  
   const { searchParams } = new URL(req.url);
   let group_id = searchParams.get('id'); 
 
@@ -66,104 +61,90 @@ export default async function handler(req) {
     return new Response(JSON.stringify({ message: 'Group ID is required' }), { status: 400, headers: corsHeaders });
   }
 
-  try {
-    let body = {};
+  // ----------------------------------------------------------------------
+  // CASE: SOFT DELETE (DELETE Method)
+  // ----------------------------------------------------------------------
+  if (req.method === 'DELETE') {
     try {
-      body = await req.json();
-    } catch (e) {
-      return new Response(JSON.stringify({ message: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
-    }
+      const { current_admin_id } = await req.json();
 
-    const { current_admin_id, name, file_url, old_name, old_url } = body;
-    
-    if (!current_admin_id || (!name && !file_url)) {
-         return new Response(JSON.stringify({ message: 'Missing required fields' }), { status: 400, headers: corsHeaders });
-    }
+      const actors = await sql`SELECT * FROM admin_system WHERE admin_id = ${current_admin_id}`;
+      if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
+      const actorAdmin = actors[0];
 
-    // 1. ตรวจสอบ Admin
-    const actors = await sql`
-        SELECT admin_id, email, first_name, last_name 
-        FROM admin_system 
-        WHERE admin_id = ${current_admin_id}
-    `;
-
-    if (actors.length === 0) {
-        return new Response(JSON.stringify({ message: 'Unauthorized: Admin not found' }), { status: 403, headers: corsHeaders });
-    }
-    const actorAdmin = actors[0];
-
-    // --- ส่วนที่ปรับปรุง: ตรวจสอบการเปลี่ยนแปลงเพื่อสร้าง Log ---
-    let logDetails = { 
-        target: 'voice_fonduegroup',
-        group_id: group_id 
-    };
-    let changeDescriptions = [];
-
-    // ตรวจสอบการเปลี่ยนชื่อ: บันทึกเฉพาะเมื่อชื่อใหม่ไม่ตรงกับชื่อเก่า
-    if (name && name !== old_name) {
-        logDetails.new_name = name;
-        logDetails.old_name = old_name;
-        changeDescriptions.push("เปลี่ยนชื่อ");
-    }
-
-    // ตรวจสอบการเปลี่ยนรูป: บันทึกเฉพาะเมื่อ URL ใหม่ไม่ตรงกับ URL เก่า
-    if (file_url && file_url !== old_url) {
-        logDetails.new_url = file_url;
-        logDetails.old_url = old_url;
-        changeDescriptions.push("เปลี่ยนรูป");
-    }
-
-    // กำหนด description ตามสิ่งที่เปลี่ยนจริง
-    logDetails.description = changeDescriptions.length > 0 
-        ? changeDescriptions.join(" และ ") 
-        : "ไม่มีการเปลี่ยนแปลงข้อมูล";
-
-    // 2. Update Logic
-    const updatedGroup = await sql`
+      const deletedGroup = await sql`
         UPDATE voice_fonduegroup
-        SET 
-            name = COALESCE(${name}, name),
-            photo = COALESCE(${file_url}, photo),
-            updated_on = NOW()
+        SET deleted_at = NOW(), updated_on = NOW()
         WHERE id = ${group_id}
-        RETURNING id, name, photo, updated_on;
-    `;
+        RETURNING id, name, deleted_at;
+      `;
 
-    if (updatedGroup.length === 0) {
-        await saveAdminLog(sql, {
-            adminId: actorAdmin.admin_id,
-            email: actorAdmin.email,
-            first_name: actorAdmin.first_name,
-            last_name: actorAdmin.last_name,
-            action_type: 'ORGANIZATION_UPDATE',
-            status: 'FAILED',
-            ipAddress,
-            userAgent,
-            details: { reason: 'Group ID not found', group_id: group_id }
-        });
-        return new Response(JSON.stringify({ message: 'Update failed. Group ID not found.' }), { status: 404, headers: corsHeaders });
-    }
+      if (deletedGroup.length === 0) return new Response(JSON.stringify({ message: 'Not found' }), { status: 404, headers: corsHeaders });
 
-    // 3. บันทึก Success Log เฉพาะข้อมูลที่เปลี่ยนแปลง
-    await saveAdminLog(sql, {
+      await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
         first_name: actorAdmin.first_name,
         last_name: actorAdmin.last_name,
-        action_type: 'GROUP_UPDATE',
+        action_type: 'GROUP_DELETE',
         status: 'SUCCESS',
-        ipAddress,
-        userAgent,
-        details: logDetails
-    });
+        ipAddress, userAgent,
+        details: { group_id, action: 'soft_delete', name: deletedGroup[0].name }
+      });
 
-    return new Response(JSON.stringify({ 
-        success: true, 
-        data: updatedGroup[0]
-    }), { status: 200, headers: corsHeaders });
-
-  } catch (error) {
-    console.error("API Error:", error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+      return new Response(JSON.stringify({ success: true, data: deletedGroup[0] }), { status: 200, headers: corsHeaders });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+    }
   }
+
+  // ----------------------------------------------------------------------
+  // CASE: UPDATE & RESTORE (PUT Method)
+  // ----------------------------------------------------------------------
+  if (req.method === 'PUT') {
+    try {
+      const body = await req.json();
+      const { current_admin_id, name, file_url, old_name, old_url, restore } = body;
+
+      const actors = await sql`SELECT * FROM admin_system WHERE admin_id = ${current_admin_id}`;
+      if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
+      const actorAdmin = actors[0];
+
+      // Logic: ถ้าส่ง restore: true มา ให้ล้างค่า deleted_at เป็น NULL
+      const updatedGroup = await sql`
+        UPDATE voice_fonduegroup
+        SET 
+            name = COALESCE(${name}, name),
+            photo = COALESCE(${file_url}, photo),
+            deleted_at = CASE WHEN ${restore} === true THEN NULL ELSE deleted_at END,
+            updated_on = NOW()
+        WHERE id = ${group_id}
+        RETURNING id, name, photo, deleted_at, updated_on;
+      `;
+
+      if (updatedGroup.length === 0) return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
+
+      await saveAdminLog(sql, {
+        adminId: actorAdmin.admin_id,
+        email: actorAdmin.email,
+        first_name: actorAdmin.first_name,
+        last_name: actorAdmin.last_name,
+        action_type: restore ? 'GROUP_RESTORE' : 'GROUP_UPDATE',
+        status: 'SUCCESS',
+        ipAddress, userAgent,
+        details: { group_id, restore_action: !!restore }
+      });
+
+      return new Response(JSON.stringify({ 
+        success: true, 
+        data: updatedGroup[0],
+        status: updatedGroup[0].deleted_at === null ? 'active' : updatedGroup[0].deleted_at
+      }), { status: 200, headers: corsHeaders });
+
+    } catch (error) {
+      return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+    }
+  }
+
+  return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
 }
