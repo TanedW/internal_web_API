@@ -161,3 +161,18 @@ Updates a case's cover image or a media item's URL.
 - `/Users/taned/Desktop/intern/internal_web_api/api/flex_message/manage_flex_message.js`
 - `/Users/taned/Desktop/intern/internal_web_api/api/organization/manage_org.js`
 - `/Users/taned/Desktop/intern/internal_web_api/index.js`
+
+## File Dependencies
+
+```mermaid
+graph TD
+    subgraph "API Endpoints"
+        A[index.js] --> B[api/AdminLogin.js];
+        A --> C[api/AdminList.js];
+        A --> D[api/cases/manage_case.js];
+        A --> E[api/cases/search_case.js];
+        A --> F[api/flex_message/manage_flex_message.js];
+        A --> G[api/organization/manage_org.js];
+        A --> H[api/organization/search_org.js];
+    end
+```
