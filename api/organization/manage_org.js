@@ -31,6 +31,15 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
   }
 }
 
+// ----------------------------------------------------------------------
+// Main Handler
+// ----------------------------------------------------------------------
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
 export default async function handler(req) {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -53,13 +62,14 @@ export default async function handler(req) {
   }
 
   // ----------------------------------------------------------------------
-  // CASE: DELETE (Soft Delete)
+  // CASE: SOFT DELETE (DELETE Method)
   // ----------------------------------------------------------------------
   if (req.method === 'DELETE') {
     try {
       const { current_admin_id, description } = await req.json();
+
       if (!description || description.trim() === "") {
-        return new Response(JSON.stringify({ message: 'Description is required' }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ message: 'Description is required for deletion' }), { status: 400, headers: corsHeaders });
       }
 
       const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
@@ -83,7 +93,12 @@ export default async function handler(req) {
         action_type: 'GROUP_DELETE',
         status: 'SUCCESS',
         ipAddress, userAgent,
-        details: { target: 'voice_fonduegroup', group_id, action: 'soft_delete', description: description }
+        details: { 
+            target: 'voice_fonduegroup', 
+            group_id, 
+            action: 'soft_delete', 
+            description: description 
+        }
       });
 
       return new Response(JSON.stringify({ success: true, data: deletedGroup[0] }), { status: 200, headers: corsHeaders });
@@ -108,8 +123,8 @@ export default async function handler(req) {
         restore,
         old_name,
         old_url,
-        old_official, // เพิ่มการรับค่าเดิมจากหน้าบ้าน
-        old_download  // เพิ่มการรับค่าเดิมจากหน้าบ้าน
+        old_official, // รับค่าเดิมจาก Frontend
+        old_download  // รับค่าเดิมจาก Frontend
       } = body;
 
       if (restore === true && (!description || description.trim() === "")) {
@@ -120,38 +135,41 @@ export default async function handler(req) {
       if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
       const actorAdmin = actors[0];
 
+      // เตรียมโครงสร้าง Log
       let logDetails = { 
           target: 'voice_fonduegroup',
           group_id: group_id,
           description: description || "ปรับปรุงข้อมูล"
       };
 
-      // 1. ตรวจสอบการเปลี่ยน Official Group
-      if (typeof official_group !== 'undefined' && official_group !== old_official) {
-          logDetails.action = `switch official from ${old_official} to ${official_group}`;
-      }
+      let actions = [];
 
-      // 2. ตรวจสอบการเปลี่ยน Download CSV
-      if (typeof download_csv !== 'undefined' && download_csv !== old_download) {
-          // หากมีการสลับ official ไปก่อนหน้าแล้ว อาจจะใช้ concat หรือเก็บแยกตามความเหมาะสม
-          // ในที่นี้ถ้าเปลี่ยนทั้งคู่ จะบันทึกอันล่าสุด หรือคุณสามารถปรับเป็น array ได้
-          logDetails.action = `switch download_csv from ${old_download} to ${download_csv}`;
-      }
-
-      // 3. ตรวจสอบการ Restore (ให้ Priority สูงสุดในเรื่อง Action name)
+      // ตรวจสอบการเปลี่ยนแปลงทีละส่วนเพื่อสร้าง Action String
       if (restore === true) {
-          logDetails.action = "restore";
+          actions.push("restore");
+      } else {
+          // เช็ค Official Group
+          if (typeof official_group !== 'undefined' && official_group !== old_official) {
+              actions.push(`switch official from ${old_official} to ${official_group}`);
+          }
+          // เช็ค Download CSV
+          if (typeof download_csv !== 'undefined' && download_csv !== old_download) {
+              actions.push(`switch download_csv from ${old_download} to ${download_csv}`);
+          }
+          // เช็คการเปลี่ยนชื่อ
+          if (name && name !== old_name) {
+              actions.push(`change name`);
+              logDetails.old_name = old_name;
+              logDetails.new_name = name;
+          }
+          // เช็คการเปลี่ยนรูป
+          if (file_url && file_url !== old_url) {
+              actions.push(`change photo`);
+          }
       }
 
-      // เก็บประวัติชื่อและ URL หากมีการเปลี่ยน
-      if (name && name !== old_name) {
-          logDetails.new_name = name;
-          logDetails.old_name = old_name;
-      }
-      if (file_url && file_url !== old_url) {
-          logDetails.new_url = file_url;
-          logDetails.old_url = old_url;
-      }
+      // รวม actions เป็น string เดียวกัน (เช่น "switch official from false to true, switch download_csv from true to false")
+      logDetails.action = actions.length > 0 ? actions.join(", ") : "update_info";
 
       const updatedGroup = await sql`
         UPDATE voice_fonduegroup
@@ -191,9 +209,3 @@ export default async function handler(req) {
 
   return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
 }
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
