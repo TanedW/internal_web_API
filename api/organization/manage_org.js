@@ -61,31 +61,23 @@ export default async function handler(req) {
     return new Response(JSON.stringify({ message: 'Group ID is required' }), { status: 400, headers: corsHeaders });
   }
 
-  // ----------------------------------------------------------------------
-  // CASE: SOFT DELETE (DELETE Method)
-  // ----------------------------------------------------------------------
+  // (DELETE Method คงเดิม...)
   if (req.method === 'DELETE') {
     try {
       const { current_admin_id, description } = await req.json();
-
-      // บังคับให้ใส่ description
       if (!description || description.trim() === "") {
         return new Response(JSON.stringify({ message: 'Description is required for deletion' }), { status: 400, headers: corsHeaders });
       }
-
       const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
       if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
       const actorAdmin = actors[0];
-
       const deletedGroup = await sql`
         UPDATE voice_fonduegroup
         SET deleted_at = NOW(), updated_on = NOW()
         WHERE id = ${group_id}
         RETURNING id, name, deleted_at;
       `;
-
       if (deletedGroup.length === 0) return new Response(JSON.stringify({ message: 'Not found' }), { status: 404, headers: corsHeaders });
-
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
@@ -96,7 +88,6 @@ export default async function handler(req) {
         ipAddress, userAgent,
         details: { target: 'voice_fonduegroup', group_id, action: 'soft_delete', description: description }
       });
-
       return new Response(JSON.stringify({ success: true, data: deletedGroup[0] }), { status: 200, headers: corsHeaders });
     } catch (error) {
       return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
@@ -113,15 +104,14 @@ export default async function handler(req) {
         current_admin_id, 
         name, 
         file_url, 
-        description, // ตรวจสอบว่ามีบรรทัดนี้เพื่อรับค่าจากหน้าบ้าน
+        description, 
         official_group, 
         download_csv,
         restore,
-        old_name, // เพิ่มตรงนี้
+        old_name,
         old_url
       } = body;
 
-      // บังคับให้ใส่ description เฉพาะกรณีที่เป็นการ Restore
       if (restore === true && (!description || description.trim() === "")) {
         return new Response(JSON.stringify({ message: 'Description is required for restoration' }), { status: 400, headers: corsHeaders });
       }
@@ -130,46 +120,51 @@ export default async function handler(req) {
       if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
       const actorAdmin = actors[0];
 
+      // --- ส่วนที่เพิ่ม/แก้ไข: ดึงข้อมูลเดิมเพื่อเช็คการเปลี่ยนแปลงของ official_group และ download_csv ---
+      const currentGroupData = await sql`SELECT official_group, download_csv FROM voice_fonduegroup WHERE id = ${group_id}`;
+      if (currentGroupData.length === 0) return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
+      const oldGroup = currentGroupData[0];
+
       let logDetails = { 
           target: 'voice_fonduegroup',
           group_id: group_id,
-          description: description
+          description: description || "ปรับปรุงข้อมูล"
       };
 
       if (restore === true) {
           logDetails.action = "restore";
       } else {
-          // ส่วนของการ Update ข้อมูลปกติ (ใช้ Logic เดิมหากไม่ใส่ description)
-          if (name && name !== old_name) {
+          // เช็คการเปลี่ยน Official Group
+          if (official_group !== undefined && official_group !== oldGroup.official_group) {
+              logDetails.action = `switch official from ${oldGroup.official_group} to ${official_group}`;
+          } 
+          // เช็คการเปลี่ยน Download CSV
+          else if (download_csv !== undefined && download_csv !== oldGroup.download_csv) {
+              logDetails.action = `switch download_csv from ${oldGroup.download_csv} to ${download_csv}`;
+          }
+          // กรณีอัปเดตชื่อหรือรูป (Logic เดิม)
+          else if (name && name !== old_name) {
+              logDetails.action = "update_info";
               logDetails.new_name = name;
               logDetails.old_name = old_name;
-          }
-          if (file_url && file_url !== old_url) {
-              logDetails.new_url = file_url;
-              logDetails.old_url = old_url;
-          }
-          if (!description) {
-              let autoDesc = [];
-              if (name && name !== old_name) autoDesc.push("เปลี่ยนชื่อ");
-              if (file_url && file_url !== old_url) autoDesc.push("เปลี่ยนรูป");
-              logDetails.description = autoDesc.length > 0 ? autoDesc.join(" และ ") : "ปรับปรุงข้อมูล";
+          } else {
+              logDetails.action = "update_info";
           }
       }
+      // -----------------------------------------------------------------------------------------
 
       const updatedGroup = await sql`
         UPDATE voice_fonduegroup
         SET 
-            name = COALESCE(${name}, name),
+          name = COALESCE(${name}, name),
           photo = COALESCE(${file_url}, photo),
-          official_group = COALESCE(${official_group}, official_group), -- อัปเดตสถานะ Official
-          download_csv = COALESCE(${download_csv}, download_csv),     -- อัปเดตสิทธิ์ CSV
+          official_group = CASE WHEN ${official_group} IS NOT NULL THEN ${official_group} ELSE official_group END,
+          download_csv = CASE WHEN ${download_csv} IS NOT NULL THEN ${download_csv} ELSE download_csv END,
           deleted_at = CASE WHEN ${restore} = true THEN NULL ELSE deleted_at END,
           updated_on = NOW()
         WHERE id = ${group_id}
-        RETURNING id, name, photo, deleted_at, updated_on;
+        RETURNING id, name, photo, official_group, download_csv, deleted_at, updated_on;
       `;
-
-      if (updatedGroup.length === 0) return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
 
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
