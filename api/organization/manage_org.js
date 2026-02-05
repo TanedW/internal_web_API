@@ -15,7 +15,7 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
       INSERT INTO admin_system_logs 
       (admin_id, email, first_name, last_name, action_type, status, ip_address, user_agent, details)
       VALUES (
-        ${adminId},       
+        ${adminId}::integer,       
         ${email},         
         ${first_name},    
         ${last_name},     
@@ -54,7 +54,7 @@ export default async function handler(req) {
   const userAgent = req.headers.get('user-agent') || null;
 
   if (group_id) {
-    group_id = group_id.replace(/[^a-zA-Z0-9-]/g, '');
+    group_id = group_id.replace(/[^0-9]/g, ''); // กรองให้เหลือแต่ตัวเลขสำหรับ ID
   }
 
   if (!group_id) {
@@ -72,14 +72,15 @@ export default async function handler(req) {
         return new Response(JSON.stringify({ message: 'Description is required for deletion' }), { status: 400, headers: corsHeaders });
       }
 
-      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
+      // ใช้ ::integer เพื่อเปรียบเทียบ ID
+      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}::integer`;
       if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
       const actorAdmin = actors[0];
 
       const deletedGroup = await sql`
         UPDATE voice_fonduegroup
         SET deleted_at = NOW(), updated_on = NOW()
-        WHERE id = ${group_id}::text
+        WHERE id = ${group_id}::integer
         RETURNING id, name, deleted_at;
       `;
 
@@ -124,13 +125,13 @@ export default async function handler(req) {
         return new Response(JSON.stringify({ message: 'Description is required for restoration' }), { status: 400, headers: corsHeaders });
       }
 
-      // ดึงข้อมูลผู้กระทำ
-      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
+      // 1. ดึงข้อมูลผู้กระทำ (Cast ID เป็น integer)
+      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}::integer`;
       if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
       const actorAdmin = actors[0];
 
-      // ดึงข้อมูลเดิมของ Group เพื่อเปรียบเทียบ (ป้องกัน Error DataType ด้วย ::text)
-      const currentGroupData = await sql`SELECT official_group, download_csv FROM voice_fonduegroup WHERE id = ${group_id}::text`;
+      // 2. ดึงข้อมูลเดิม (Cast ID เป็น integer)
+      const currentGroupData = await sql`SELECT official_group, download_csv FROM voice_fonduegroup WHERE id = ${group_id}::integer`;
       if (currentGroupData.length === 0) return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
       const oldGroup = currentGroupData[0];
 
@@ -140,32 +141,25 @@ export default async function handler(req) {
           description: description || ""
       };
 
-      // Logic การกำหนด Action สำหรับ Log
       if (restore === true) {
           logDetails.action = "restore";
-          if (!description) logDetails.description = "คืนค่าข้อมูล";
       } else {
-          // ตรวจสอบการเปลี่ยน Official Group
           if (official_group !== undefined && official_group !== null && official_group !== oldGroup.official_group) {
               logDetails.action = `switch official from ${oldGroup.official_group} to ${official_group}`;
           } 
-          // ตรวจสอบการเปลี่ยนสิทธิ์ Download CSV
           else if (download_csv !== undefined && download_csv !== null && download_csv !== oldGroup.download_csv) {
               logDetails.action = `switch download_csv from ${oldGroup.download_csv} to ${download_csv}`;
           }
-          // ตรวจสอบการเปลี่ยนชื่อ/รูป
           else if (name && name !== old_name) {
               logDetails.action = "update_info";
               logDetails.new_name = name;
               logDetails.old_name = old_name;
-              if (!description) logDetails.description = "เปลี่ยนชื่อกลุ่ม";
           } else {
               logDetails.action = "update_info";
-              if (!description) logDetails.description = "ปรับปรุงข้อมูลทั่วไป";
           }
       }
 
-      // ทำการอัปเดตข้อมูล (ใส่ Type Casting ทุกจุดที่เป็น Boolean หรืออาจเป็น NULL)
+      // 3. ทำการอัปเดต (ตรวจสอบ Type Casting ทั้งหมด)
       const updatedGroup = await sql`
         UPDATE voice_fonduegroup
         SET 
@@ -184,11 +178,10 @@ export default async function handler(req) {
             ELSE deleted_at 
           END,
           updated_on = NOW()
-        WHERE id = ${group_id}::text
+        WHERE id = ${group_id}::integer
         RETURNING id, name, photo, official_group, download_csv, deleted_at, updated_on;
       `;
 
-      // บันทึก Log
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
