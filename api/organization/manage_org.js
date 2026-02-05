@@ -61,23 +61,30 @@ export default async function handler(req) {
     return new Response(JSON.stringify({ message: 'Group ID is required' }), { status: 400, headers: corsHeaders });
   }
 
-  // (DELETE Method คงเดิม...)
+  // ----------------------------------------------------------------------
+  // CASE: SOFT DELETE (DELETE Method)
+  // ----------------------------------------------------------------------
   if (req.method === 'DELETE') {
     try {
       const { current_admin_id, description } = await req.json();
+
       if (!description || description.trim() === "") {
         return new Response(JSON.stringify({ message: 'Description is required for deletion' }), { status: 400, headers: corsHeaders });
       }
+
       const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
       if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
       const actorAdmin = actors[0];
+
       const deletedGroup = await sql`
         UPDATE voice_fonduegroup
         SET deleted_at = NOW(), updated_on = NOW()
-        WHERE id = ${group_id}
+        WHERE id = ${group_id}::text
         RETURNING id, name, deleted_at;
       `;
+
       if (deletedGroup.length === 0) return new Response(JSON.stringify({ message: 'Not found' }), { status: 404, headers: corsHeaders });
+
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
@@ -88,6 +95,7 @@ export default async function handler(req) {
         ipAddress, userAgent,
         details: { target: 'voice_fonduegroup', group_id, action: 'soft_delete', description: description }
       });
+
       return new Response(JSON.stringify({ success: true, data: deletedGroup[0] }), { status: 200, headers: corsHeaders });
     } catch (error) {
       return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
@@ -116,56 +124,71 @@ export default async function handler(req) {
         return new Response(JSON.stringify({ message: 'Description is required for restoration' }), { status: 400, headers: corsHeaders });
       }
 
+      // ดึงข้อมูลผู้กระทำ
       const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
       if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
       const actorAdmin = actors[0];
 
-      // --- ส่วนที่เพิ่ม/แก้ไข: ดึงข้อมูลเดิมเพื่อเช็คการเปลี่ยนแปลงของ official_group และ download_csv ---
-      const currentGroupData = await sql`SELECT official_group, download_csv FROM voice_fonduegroup WHERE id = ${group_id}`;
+      // ดึงข้อมูลเดิมของ Group เพื่อเปรียบเทียบ (ป้องกัน Error DataType ด้วย ::text)
+      const currentGroupData = await sql`SELECT official_group, download_csv FROM voice_fonduegroup WHERE id = ${group_id}::text`;
       if (currentGroupData.length === 0) return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
       const oldGroup = currentGroupData[0];
 
       let logDetails = { 
           target: 'voice_fonduegroup',
           group_id: group_id,
-          description: description || "ปรับปรุงข้อมูล"
+          description: description || ""
       };
 
+      // Logic การกำหนด Action สำหรับ Log
       if (restore === true) {
           logDetails.action = "restore";
+          if (!description) logDetails.description = "คืนค่าข้อมูล";
       } else {
-          // เช็คการเปลี่ยน Official Group
-          if (official_group !== undefined && official_group !== oldGroup.official_group) {
+          // ตรวจสอบการเปลี่ยน Official Group
+          if (official_group !== undefined && official_group !== null && official_group !== oldGroup.official_group) {
               logDetails.action = `switch official from ${oldGroup.official_group} to ${official_group}`;
           } 
-          // เช็คการเปลี่ยน Download CSV
-          else if (download_csv !== undefined && download_csv !== oldGroup.download_csv) {
+          // ตรวจสอบการเปลี่ยนสิทธิ์ Download CSV
+          else if (download_csv !== undefined && download_csv !== null && download_csv !== oldGroup.download_csv) {
               logDetails.action = `switch download_csv from ${oldGroup.download_csv} to ${download_csv}`;
           }
-          // กรณีอัปเดตชื่อหรือรูป (Logic เดิม)
+          // ตรวจสอบการเปลี่ยนชื่อ/รูป
           else if (name && name !== old_name) {
               logDetails.action = "update_info";
               logDetails.new_name = name;
               logDetails.old_name = old_name;
+              if (!description) logDetails.description = "เปลี่ยนชื่อกลุ่ม";
           } else {
               logDetails.action = "update_info";
+              if (!description) logDetails.description = "ปรับปรุงข้อมูลทั่วไป";
           }
       }
-      // -----------------------------------------------------------------------------------------
 
+      // ทำการอัปเดตข้อมูล (ใส่ Type Casting ทุกจุดที่เป็น Boolean หรืออาจเป็น NULL)
       const updatedGroup = await sql`
         UPDATE voice_fonduegroup
         SET 
-          name = COALESCE(${name}, name),
-          photo = COALESCE(${file_url}, photo),
-          official_group = CASE WHEN ${official_group} IS NOT NULL THEN ${official_group} ELSE official_group END,
-          download_csv = CASE WHEN ${download_csv} IS NOT NULL THEN ${download_csv} ELSE download_csv END,
-          deleted_at = CASE WHEN ${restore} = true THEN NULL ELSE deleted_at END,
+          name = COALESCE(${name}::text, name),
+          photo = COALESCE(${file_url}::text, photo),
+          official_group = CASE 
+            WHEN ${official_group}::boolean IS NOT NULL THEN ${official_group}::boolean 
+            ELSE official_group 
+          END,
+          download_csv = CASE 
+            WHEN ${download_csv}::boolean IS NOT NULL THEN ${download_csv}::boolean 
+            ELSE download_csv 
+          END,
+          deleted_at = CASE 
+            WHEN ${restore}::boolean = true THEN NULL 
+            ELSE deleted_at 
+          END,
           updated_on = NOW()
-        WHERE id = ${group_id}
+        WHERE id = ${group_id}::text
         RETURNING id, name, photo, official_group, download_csv, deleted_at, updated_on;
       `;
 
+      // บันทึก Log
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
@@ -184,6 +207,7 @@ export default async function handler(req) {
       }), { status: 200, headers: corsHeaders });
 
     } catch (error) {
+      console.error("Update Error:", error);
       return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
     }
   }
