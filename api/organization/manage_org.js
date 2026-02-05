@@ -109,7 +109,11 @@ export default async function handler(req) {
   if (req.method === 'PUT') {
     try {
       const body = await req.json();
-      const { current_admin_id, name, file_url, old_name, old_url, restore, description } = body;
+      const { 
+        current_admin_id, name, file_url, 
+      official_group, download_csv, // เพิ่มตรงนี้
+      old_name, old_url, restore, 
+      } = body;
 
       // บังคับให้ใส่ description เฉพาะกรณีที่เป็นการ Restore
       if (restore === true && (!description || description.trim() === "")) {
@@ -150,9 +154,11 @@ export default async function handler(req) {
         UPDATE voice_fonduegroup
         SET 
             name = COALESCE(${name}, name),
-            photo = COALESCE(${file_url}, photo),
-            deleted_at = CASE WHEN ${restore} = true THEN NULL ELSE deleted_at END,
-            updated_on = NOW()
+          photo = COALESCE(${file_url}, photo),
+          official_group = COALESCE(${official_group}, official_group), -- อัปเดตสถานะ Official
+          download_csv = COALESCE(${download_csv}, download_csv),     -- อัปเดตสิทธิ์ CSV
+          deleted_at = CASE WHEN ${restore} = true THEN NULL ELSE deleted_at END,
+          updated_on = NOW()
         WHERE id = ${group_id}
         RETURNING id, name, photo, deleted_at, updated_on;
       `;
