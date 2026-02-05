@@ -195,4 +195,3 @@ export default async function handler(req) {
 
   return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
 }
-manage_org.js
