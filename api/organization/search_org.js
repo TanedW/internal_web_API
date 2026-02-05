@@ -39,18 +39,18 @@ export default async function handler(req) {
       // ค้นหาข้อมูลจากตาราง voice_fonduegroup
       // -----------------------------------------------------
 const groups = await sql`
-  SELECT 
+SELECT 
     g.id,
     g.name,
     g.photo,
-    g.official_group,
-    -- ถ้า deleted_at เป็น null ให้บอกว่า 'active' ถ้ามีค่าให้ส่ง timestamp ออกไป
+    g.official_group, -- ดึงค่า boolean ของ Official Account
+    g.allow_csv,      -- ดึงค่า boolean ของสิทธิ์การดาวน์โหลด CSV
+    -- ถ้า deleted_at เป็น null ให้บอกว่า 'active' ถ้ามีค่าให้ส่ง 'deleted'
     CASE 
       WHEN g.deleted_at IS NULL THEN 'active'
-      WHEN g.deleted_at IS NOT NULL THEN 'deleted' 
-      ELSE g.deleted_at::text 
+      ELSE 'deleted' 
     END AS status,
-    g.deleted_at, -- ส่งค่า raw ไปด้วยเพื่อให้ Frontend จัดการ format ได้ง่าย
+    g.deleted_at,
     COALESCE(
       json_agg(
         json_build_object(
