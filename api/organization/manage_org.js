@@ -31,15 +31,6 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
   }
 }
 
-// ----------------------------------------------------------------------
-// Main Handler
-// ----------------------------------------------------------------------
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
 export default async function handler(req) {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -62,15 +53,13 @@ export default async function handler(req) {
   }
 
   // ----------------------------------------------------------------------
-  // CASE: SOFT DELETE (DELETE Method)
+  // CASE: DELETE (Soft Delete)
   // ----------------------------------------------------------------------
   if (req.method === 'DELETE') {
     try {
       const { current_admin_id, description } = await req.json();
-
-      // บังคับให้ใส่ description
       if (!description || description.trim() === "") {
-        return new Response(JSON.stringify({ message: 'Description is required for deletion' }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ message: 'Description is required' }), { status: 400, headers: corsHeaders });
       }
 
       const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
@@ -113,15 +102,16 @@ export default async function handler(req) {
         current_admin_id, 
         name, 
         file_url, 
-        description, // ตรวจสอบว่ามีบรรทัดนี้เพื่อรับค่าจากหน้าบ้าน
+        description, 
         official_group, 
         download_csv,
         restore,
-        old_name, // เพิ่มตรงนี้
-        old_url
+        old_name,
+        old_url,
+        old_official, // เพิ่มการรับค่าเดิมจากหน้าบ้าน
+        old_download  // เพิ่มการรับค่าเดิมจากหน้าบ้าน
       } = body;
 
-      // บังคับให้ใส่ description เฉพาะกรณีที่เป็นการ Restore
       if (restore === true && (!description || description.trim() === "")) {
         return new Response(JSON.stringify({ message: 'Description is required for restoration' }), { status: 400, headers: corsHeaders });
       }
@@ -133,40 +123,47 @@ export default async function handler(req) {
       let logDetails = { 
           target: 'voice_fonduegroup',
           group_id: group_id,
-          description: description
+          description: description || "ปรับปรุงข้อมูล"
       };
 
+      // 1. ตรวจสอบการเปลี่ยน Official Group
+      if (typeof official_group !== 'undefined' && official_group !== old_official) {
+          logDetails.action = `switch official from ${old_official} to ${official_group}`;
+      }
+
+      // 2. ตรวจสอบการเปลี่ยน Download CSV
+      if (typeof download_csv !== 'undefined' && download_csv !== old_download) {
+          // หากมีการสลับ official ไปก่อนหน้าแล้ว อาจจะใช้ concat หรือเก็บแยกตามความเหมาะสม
+          // ในที่นี้ถ้าเปลี่ยนทั้งคู่ จะบันทึกอันล่าสุด หรือคุณสามารถปรับเป็น array ได้
+          logDetails.action = `switch download_csv from ${old_download} to ${download_csv}`;
+      }
+
+      // 3. ตรวจสอบการ Restore (ให้ Priority สูงสุดในเรื่อง Action name)
       if (restore === true) {
           logDetails.action = "restore";
-      } else {
-          // ส่วนของการ Update ข้อมูลปกติ (ใช้ Logic เดิมหากไม่ใส่ description)
-          if (name && name !== old_name) {
-              logDetails.new_name = name;
-              logDetails.old_name = old_name;
-          }
-          if (file_url && file_url !== old_url) {
-              logDetails.new_url = file_url;
-              logDetails.old_url = old_url;
-          }
-          if (!description) {
-              let autoDesc = [];
-              if (name && name !== old_name) autoDesc.push("เปลี่ยนชื่อ");
-              if (file_url && file_url !== old_url) autoDesc.push("เปลี่ยนรูป");
-              logDetails.description = autoDesc.length > 0 ? autoDesc.join(" และ ") : "ปรับปรุงข้อมูล";
-          }
+      }
+
+      // เก็บประวัติชื่อและ URL หากมีการเปลี่ยน
+      if (name && name !== old_name) {
+          logDetails.new_name = name;
+          logDetails.old_name = old_name;
+      }
+      if (file_url && file_url !== old_url) {
+          logDetails.new_url = file_url;
+          logDetails.old_url = old_url;
       }
 
       const updatedGroup = await sql`
         UPDATE voice_fonduegroup
         SET 
-            name = COALESCE(${name}, name),
+          name = COALESCE(${name}, name),
           photo = COALESCE(${file_url}, photo),
-          official_group = COALESCE(${official_group}, official_group), -- อัปเดตสถานะ Official
-          download_csv = COALESCE(${download_csv}, download_csv),     -- อัปเดตสิทธิ์ CSV
+          official_group = ${typeof official_group !== 'undefined' ? official_group : sql`official_group`},
+          download_csv = ${typeof download_csv !== 'undefined' ? download_csv : sql`download_csv`},
           deleted_at = CASE WHEN ${restore} = true THEN NULL ELSE deleted_at END,
           updated_on = NOW()
         WHERE id = ${group_id}
-        RETURNING id, name, photo, deleted_at, updated_on;
+        RETURNING id, name, photo, official_group, download_csv, deleted_at, updated_on;
       `;
 
       if (updatedGroup.length === 0) return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
@@ -184,8 +181,7 @@ export default async function handler(req) {
 
       return new Response(JSON.stringify({ 
         success: true, 
-        data: updatedGroup[0],
-        status: updatedGroup[0].deleted_at === null ? 'active' : updatedGroup[0].deleted_at
+        data: updatedGroup[0]
       }), { status: 200, headers: corsHeaders });
 
     } catch (error) {
@@ -195,3 +191,9 @@ export default async function handler(req) {
 
   return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
 }
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
