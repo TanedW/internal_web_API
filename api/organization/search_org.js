@@ -44,7 +44,7 @@ SELECT
     g.name,
     g.photo,
     g.official_group, -- ดึงค่า boolean ของ Official Account
-    g.allow_csv,      -- ดึงค่า boolean ของสิทธิ์การดาวน์โหลด CSV
+    g.download_csv,      -- ดึงค่า boolean ของสิทธิ์การดาวน์โหลด CSV
     -- ถ้า deleted_at เป็น null ให้บอกว่า 'active' ถ้ามีค่าให้ส่ง 'deleted'
     CASE 
       WHEN g.deleted_at IS NULL THEN 'active'
