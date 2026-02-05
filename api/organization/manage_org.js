@@ -110,9 +110,15 @@ export default async function handler(req) {
     try {
       const body = await req.json();
       const { 
-        current_admin_id, name, file_url, 
-      official_group, download_csv, // เพิ่มตรงนี้
-      old_name, old_url, restore, 
+        current_admin_id, 
+        name, 
+        file_url, 
+        description, // ตรวจสอบว่ามีบรรทัดนี้เพื่อรับค่าจากหน้าบ้าน
+        official_group, 
+        download_csv,
+        restore,
+        old_name, // เพิ่มตรงนี้
+        old_url
       } = body;
 
       // บังคับให้ใส่ description เฉพาะกรณีที่เป็นการ Restore
