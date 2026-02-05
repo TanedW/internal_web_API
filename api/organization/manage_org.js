@@ -15,7 +15,7 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
       INSERT INTO admin_system_logs 
       (admin_id, email, first_name, last_name, action_type, status, ip_address, user_agent, details)
       VALUES (
-        ${adminId}::integer,       
+        ${adminId},       
         ${email},         
         ${first_name},    
         ${last_name},     
@@ -54,7 +54,7 @@ export default async function handler(req) {
   const userAgent = req.headers.get('user-agent') || null;
 
   if (group_id) {
-    group_id = group_id.replace(/[^0-9]/g, ''); // กรองให้เหลือแต่ตัวเลขสำหรับ ID
+    group_id = group_id.replace(/[^a-zA-Z0-9-]/g, '');
   }
 
   if (!group_id) {
@@ -68,19 +68,19 @@ export default async function handler(req) {
     try {
       const { current_admin_id, description } = await req.json();
 
+      // บังคับให้ใส่ description
       if (!description || description.trim() === "") {
         return new Response(JSON.stringify({ message: 'Description is required for deletion' }), { status: 400, headers: corsHeaders });
       }
 
-      // ใช้ ::integer เพื่อเปรียบเทียบ ID
-      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}::integer`;
+      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
       if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
       const actorAdmin = actors[0];
 
       const deletedGroup = await sql`
         UPDATE voice_fonduegroup
         SET deleted_at = NOW(), updated_on = NOW()
-        WHERE id = ${group_id}::integer
+        WHERE id = ${group_id}
         RETURNING id, name, deleted_at;
       `;
 
@@ -113,74 +113,63 @@ export default async function handler(req) {
         current_admin_id, 
         name, 
         file_url, 
-        description, 
+        description, // ตรวจสอบว่ามีบรรทัดนี้เพื่อรับค่าจากหน้าบ้าน
         official_group, 
         download_csv,
         restore,
-        old_name,
+        old_name, // เพิ่มตรงนี้
         old_url
       } = body;
 
+      // บังคับให้ใส่ description เฉพาะกรณีที่เป็นการ Restore
       if (restore === true && (!description || description.trim() === "")) {
         return new Response(JSON.stringify({ message: 'Description is required for restoration' }), { status: 400, headers: corsHeaders });
       }
 
-      // 1. ดึงข้อมูลผู้กระทำ (Cast ID เป็น integer)
-      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}::integer`;
+      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
       if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
       const actorAdmin = actors[0];
-
-      // 2. ดึงข้อมูลเดิม (Cast ID เป็น integer)
-      const currentGroupData = await sql`SELECT official_group, download_csv FROM voice_fonduegroup WHERE id = ${group_id}::integer`;
-      if (currentGroupData.length === 0) return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
-      const oldGroup = currentGroupData[0];
 
       let logDetails = { 
           target: 'voice_fonduegroup',
           group_id: group_id,
-          description: description || ""
+          description: description
       };
 
       if (restore === true) {
           logDetails.action = "restore";
       } else {
-          if (official_group !== undefined && official_group !== null && official_group !== oldGroup.official_group) {
-              logDetails.action = `switch official from ${oldGroup.official_group} to ${official_group}`;
-          } 
-          else if (download_csv !== undefined && download_csv !== null && download_csv !== oldGroup.download_csv) {
-              logDetails.action = `switch download_csv from ${oldGroup.download_csv} to ${download_csv}`;
-          }
-          else if (name && name !== old_name) {
-              logDetails.action = "update_info";
+          // ส่วนของการ Update ข้อมูลปกติ (ใช้ Logic เดิมหากไม่ใส่ description)
+          if (name && name !== old_name) {
               logDetails.new_name = name;
               logDetails.old_name = old_name;
-          } else {
-              logDetails.action = "update_info";
+          }
+          if (file_url && file_url !== old_url) {
+              logDetails.new_url = file_url;
+              logDetails.old_url = old_url;
+          }
+          if (!description) {
+              let autoDesc = [];
+              if (name && name !== old_name) autoDesc.push("เปลี่ยนชื่อ");
+              if (file_url && file_url !== old_url) autoDesc.push("เปลี่ยนรูป");
+              logDetails.description = autoDesc.length > 0 ? autoDesc.join(" และ ") : "ปรับปรุงข้อมูล";
           }
       }
 
-      // 3. ทำการอัปเดต (ตรวจสอบ Type Casting ทั้งหมด)
       const updatedGroup = await sql`
         UPDATE voice_fonduegroup
         SET 
-          name = COALESCE(${name}::text, name),
-          photo = COALESCE(${file_url}::text, photo),
-          official_group = CASE 
-            WHEN ${official_group}::boolean IS NOT NULL THEN ${official_group}::boolean 
-            ELSE official_group 
-          END,
-          download_csv = CASE 
-            WHEN ${download_csv}::boolean IS NOT NULL THEN ${download_csv}::boolean 
-            ELSE download_csv 
-          END,
-          deleted_at = CASE 
-            WHEN ${restore}::boolean = true THEN NULL 
-            ELSE deleted_at 
-          END,
+            name = COALESCE(${name}, name),
+          photo = COALESCE(${file_url}, photo),
+          official_group = COALESCE(${official_group}, official_group), -- อัปเดตสถานะ Official
+          download_csv = COALESCE(${download_csv}, download_csv),     -- อัปเดตสิทธิ์ CSV
+          deleted_at = CASE WHEN ${restore} = true THEN NULL ELSE deleted_at END,
           updated_on = NOW()
-        WHERE id = ${group_id}::integer
-        RETURNING id, name, photo, official_group, download_csv, deleted_at, updated_on;
+        WHERE id = ${group_id}
+        RETURNING id, name, photo, deleted_at, updated_on;
       `;
+
+      if (updatedGroup.length === 0) return new Response(JSON.stringify({ message: 'Group not found' }), { status: 404, headers: corsHeaders });
 
       await saveAdminLog(sql, {
         adminId: actorAdmin.admin_id,
@@ -200,10 +189,10 @@ export default async function handler(req) {
       }), { status: 200, headers: corsHeaders });
 
     } catch (error) {
-      console.error("Update Error:", error);
       return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
     }
   }
 
   return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
 }
+manage_org.js
