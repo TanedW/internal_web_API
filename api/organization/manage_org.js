@@ -165,6 +165,8 @@ export default async function handler(req) {
           // เช็คการเปลี่ยนรูป
           if (file_url && file_url !== old_url) {
               actions.push(`change photo`);
+              logDetails.old_url = old_url; // เพิ่มการเก็บค่า URL เดิม
+              logDetails.new_url = file_url; // เพิ่มการเก็บค่า URL ใหม่
           }
       }
 
