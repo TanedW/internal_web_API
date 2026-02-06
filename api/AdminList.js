@@ -54,15 +54,16 @@ export default async function handler(req, res) {
       if (requester_id) {
          try {
            // 1. เช็คสิทธิ์การลบ
-           canDelete = await permit.check(String(requester_id), "delete", "Admin_Users");
-           
+          canDelete = await permit.check(String(requester_id), "delete", {
+            type: "Admin_Users",
+            tenant: "default"
+          });           
            
            // 2. ดึง Roles ทั้งหมดของคนเรียก (requester) มาดูเพื่อ Debug
            const userRoles = await permit.api.users.getAssignedRoles({ 
-              //  user: String(requester_id),
-              type: "Admin_Users", 
-               tenant: "default" 
-           });
+                user: String(requester_id), 
+                tenant: "default" 
+            });
            const roleNames = userRoles.map(r => r.role);
 
            console.log(`--- Debug Permission ---`);
