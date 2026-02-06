@@ -54,6 +54,7 @@ export default async function handler(req, res) {
       if (requester_id) {
          try {
            canDelete = await permit.check(String(requester_id), "delete", "Admin_Users");
+           console.log(`Permission to delete for requester_id ${requester_id}:`, canDelete);  
          } catch (e) {
            console.error("Permit Check Error:", e);
            canDelete = false;
