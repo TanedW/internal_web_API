@@ -83,7 +83,7 @@ export default async function handler(req) {
         }
 
         // 3. ดึง Role จาก Permit.io โดยใช้ UUID (User Key)
-        let userRole = 'guest'; // ค่าเริ่มต้นหากหาไม่เจอ
+        let userRoles = 'guest'; // ค่าเริ่มต้นหากหาไม่เจอ
         try {
           const permitUser = await permit.api.getUser(userUuid.toString());
           if (permitUser && permitUser.roles && permitUser.roles.length > 0) {
