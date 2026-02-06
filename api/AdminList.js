@@ -63,11 +63,11 @@ export default async function handler(req, res) {
            });
            const roleNames = userRoles.map(r => r.role);
 
-          //  console.log(`--- Debug Permission ---`);
-          //  console.log(`Requester ID: ${requester_id}`);
-          //  console.log(`Roles in Permit:`, roleNames); 
-          //  console.log(`Can Delete:`, canDelete);
-          //  console.log(`------------------------`);
+           console.log(`--- Debug Permission ---`);
+           console.log(`Requester ID: ${requester_id}`);
+           console.log(`Roles in Permit:`, roleNames); 
+           console.log(`Can Delete:`, canDelete);
+           console.log(`------------------------`);
 
          } catch (e) {
            console.error("Permit Check Error:", e);
