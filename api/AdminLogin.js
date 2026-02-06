@@ -122,13 +122,17 @@ export default async function handler(req) {
         });
 
         // 6. ส่งข้อมูลทั้งหมดพร้อม Role กลับไปยัง Frontend
-        return new Response(JSON.stringify({
-            ...userData,
-            role: userRole
-        }), { 
-            status: 200, 
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
+      return new Response(JSON.stringify({
+          admin_id: userData.admin_id,
+          email: userData.email,
+          first_name: userData.first_name,
+          last_name: userData.last_name,
+          profile_url: userData.profile_url
+          // ตัด role: userRole ออก
+      }), { 
+          status: 200, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
 
       } else {
         // กรณีไม่พบ Email นี้ในฐานข้อมูลระบบ
