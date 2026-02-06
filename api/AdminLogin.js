@@ -7,10 +7,10 @@ export const config = {
 import { neon } from '@neondatabase/serverless';
 import { Permit } from "permitio";
 
-// สร้าง Instance ของ Permit (แนะนำให้ใช้ค่าจาก env)
+// สร้าง Instance ของ Permit
 const permit = new Permit({
   pdp: "https://cloudpdp.api.permit.io",
-  token: process.env.PERMIT_API_KEY,
+  token: process.env.PERMIT_API_KEY, // ตรวจสอบว่าได้ตั้งค่า API Key ใน Environment Variables แล้ว
 });
 
 const corsHeaders = {
@@ -43,6 +43,7 @@ async function saveLoginLog(sql, { adminId, ipAddress, status, email, first_name
 
 export default async function handler(req) {
   
+  // จัดการ CORS Preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
@@ -58,16 +59,17 @@ export default async function handler(req) {
       
       const sql = neon(process.env.DATA_BASE_URL);
 
-      // 1. ตรวจสอบว่า User มีอยู่ในฐานข้อมูลเราหรือไม่
+      // 1. ค้นหา User ในฐานข้อมูล Neon DB ด้วย Email เพื่อดึง admin_id (UUID)
       const existingUser = await sql`SELECT * FROM admin_system WHERE "email" = ${email} LIMIT 1`;
 
       if (existingUser.length > 0) {
         const user = existingUser[0];
+        const userUuid = user.admin_id; // UUID ที่ใช้เป็น User Key ใน Permit.io
 
-        // 2. เช็คว่า User ถูกระงับการใช้งาน (is_deleted) หรือไม่
+        // 2. ตรวจสอบสถานะการถูกระงับใช้งาน
         if (user.is_deleted === true) {
             await saveLoginLog(sql, {
-                adminId: user.admin_id,
+                adminId: userUuid,
                 email, first_name, last_name, ipAddress, userAgent, 
                 status: 'FAILED_DELETED'
             });
@@ -80,19 +82,26 @@ export default async function handler(req) {
             });
         }
 
-        // 3. ดึง Role จาก Permit.io โดยใช้ Email เป็น Key
-        let userRole = 'guest'; // Default role
+        // 3. ดึง Role จาก Permit.io โดยใช้ UUID (User Key)
+        let userRole = 'guest'; // ค่าเริ่มต้นหากหาไม่เจอ
         try {
-          const permitUser = await permit.api.getUser(email);
+          // เรียก Permit API โดยใช้ UUID ที่แปลงเป็น String
+          const permitUser = await permit.api.getUser(userUuid.toString());
+          
           if (permitUser && permitUser.roles && permitUser.roles.length > 0) {
-            // ดึง Role แรกที่เจอ (เช่น 'admin' หรือ 'editor')
-            userRole = permitUser.roles[0].role; 
+            // ดึงชื่อ Role แรกออกมา (เช่น 'admin', 'editor')
+            // ตรวจสอบทั้งแบบ Object { role: '...' } และแบบ String
+            userRole = typeof permitUser.roles[0] === 'object' 
+              ? permitUser.roles[0].role 
+              : permitUser.roles[0];
           }
+          console.log(`Role assigned for ${userUuid}: ${userRole}`);
         } catch (permitError) {
-          console.warn("Permit.io: User info not found, fallback to guest");
+          console.error(`Permit.io Error for UUID ${userUuid}:`, permitError.message);
+          // หากหา UUID ไม่เจอใน Permit ระบบจะยังคงให้เป็น guest
         }
 
-        // 4. อัปเดตข้อมูลการ Login ล่าสุดลงฐานข้อมูล
+        // 4. อัปเดตข้อมูลการเข้าใช้งานล่าสุดใน DB
         const updatedUser = await sql`
             UPDATE admin_system SET 
               "access_token" = ${access_token}, 
@@ -105,14 +114,14 @@ export default async function handler(req) {
         
         const userData = updatedUser[0];
 
-        // 5. บันทึก Success Log
+        // 5. บันทึกประวัติการ Login สำเร็จ
         await saveLoginLog(sql, {
-          adminId: userData.admin_id, 
+          adminId: userUuid, 
           email, first_name, last_name, ipAddress, userAgent,
           status: 'SUCCESS'
         });
 
-        // 6. ส่งข้อมูลกลับพร้อม Role ที่ได้จาก Permit
+        // 6. ส่งข้อมูลทั้งหมดพร้อม Role กลับไปยัง Frontend
         return new Response(JSON.stringify({
             ...userData,
             role: userRole
@@ -122,7 +131,7 @@ export default async function handler(req) {
         });
 
       } else {
-        // กรณีไม่พบอีเมลในระบบ (Unauthorized)
+        // กรณีไม่พบ Email นี้ในฐานข้อมูลระบบ
         await saveLoginLog(sql, {
           adminId: null, email, first_name, last_name, ipAddress, userAgent, 
           status: 'FAILED_UNAUTHORIZED'
@@ -137,7 +146,7 @@ export default async function handler(req) {
       }
 
     } catch (error) {
-      console.error("API Error:", error);
+      console.error("API Critical Error:", error);
       return new Response(JSON.stringify({ message: 'Internal Server Error', error: error.message }), { 
           status: 500, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -145,6 +154,7 @@ export default async function handler(req) {
     }
   }
 
+  // กรณี Method ไม่ใช่ POST
   return new Response(JSON.stringify({ message: `Method ${req.method} Not Allowed` }), { 
       status: 405, 
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
