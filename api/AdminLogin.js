@@ -19,7 +19,7 @@ export default async function handler(req) {
   if (req.method === 'POST') {
     try {
       const { email, first_name, last_name } = await req.json();
-      const sql = neon(process.env.DATABASE_URL);
+      const sql = neon(process.env.DATA_BASE_URL);
 
       // 1. ตรวจสอบ User ใน Database
       const existingUser = await sql`SELECT * FROM admin_system WHERE email = ${email} LIMIT 1`;
