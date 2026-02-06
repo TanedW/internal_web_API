@@ -174,20 +174,35 @@ export default async function handler(req, res) {
         // 2. Sync Permit + Assign Role (Permit จะจัดการ Overwrite หรือ Add Role ให้เอง)
         try {
           await permit.api.users.sync({
-             key: String(targetUser.admin_id),
-             email: targetUser.email,
-             first_name: targetUser.first_name || "",
-             last_name: targetUser.last_name || ""
+            key: String(targetUser.admin_id),
+            email: targetUser.email,
+            first_name: targetUser.first_name || "",
+            last_name: targetUser.last_name || ""
           });
 
-          // มอบหมาย Role ใหม่ (ใน Permit.io หนึ่ง User สามารถมีได้หลาย Roles)
-          await permit.api.users.assignRole({
-              user: String(targetUser.admin_id),
-              role: assignedRole, 
-              tenant: "default"
+          // --- ทางเลือก A: ดึงมาเช็กก่อน Assign เพื่อป้องกัน Role ซ้ำซ้อน ---
+          const currentAssignedRoles = await permit.api.users.getAssignedRoles({ 
+              user: String(targetUser.admin_id), 
+              tenant: "default" 
           });
+
+          // ตรวจสอบว่ามี Role นี้อยู่แล้วหรือยัง
+          const hasRole = currentAssignedRoles.some(r => r.role === assignedRole);
+
+          if (!hasRole) {
+              await permit.api.users.assignRole({
+                  user: String(targetUser.admin_id),
+                  role: assignedRole, 
+                  tenant: "default"
+              });
+              console.log(`Assigned new role: ${assignedRole} to ${targetUser.email}`);
+          } else {
+              console.log(`User ${targetUser.email} already has role: ${assignedRole}`);
+          }
+          // -----------------------------------------------------------
+
         } catch (e) {
-           console.error("Permit Sync/Assign Error:", e);
+          console.error("Permit Sync/Assign Error:", e);
         }
 
         // 3. บันทึก Log ตาม Action ที่เกิดขึ้น
