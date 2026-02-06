@@ -85,20 +85,14 @@ export default async function handler(req) {
         // 3. ดึง Role จาก Permit.io โดยใช้ UUID (User Key)
         let userRole = 'guest'; // ค่าเริ่มต้นหากหาไม่เจอ
         try {
-          // เรียก Permit API โดยใช้ UUID ที่แปลงเป็น String
           const permitUser = await permit.api.getUser(userUuid.toString());
-          
           if (permitUser && permitUser.roles && permitUser.roles.length > 0) {
-            // ดึงชื่อ Role แรกออกมา (เช่น 'admin', 'editor')
-            // ตรวจสอบทั้งแบบ Object { role: '...' } และแบบ String
-            userRole = typeof permitUser.roles[0] === 'object' 
-              ? permitUser.roles[0].role 
-              : permitUser.roles[0];
+            userRoles = permitUser.roles.map(r => 
+              typeof r === 'object' ? r.role : r
+            );
           }
-          console.log(`Role assigned for ${userUuid}: ${userRole}`);
         } catch (permitError) {
           console.error(`Permit.io Error for UUID ${userUuid}:`, permitError.message);
-          // หากหา UUID ไม่เจอใน Permit ระบบจะยังคงให้เป็น guest
         }
 
         // 4. อัปเดตข้อมูลการเข้าใช้งานล่าสุดใน DB
@@ -122,17 +116,17 @@ export default async function handler(req) {
         });
 
         // 6. ส่งข้อมูลทั้งหมดพร้อม Role กลับไปยัง Frontend
-      return new Response(JSON.stringify({
-          admin_id: userData.admin_id,
-          email: userData.email,
-          first_name: userData.first_name,
-          last_name: userData.last_name,
-          profile_url: userData.profile_url
-          // ตัด role: userRole ออก
-      }), { 
-          status: 200, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+        return new Response(JSON.stringify({
+            admin_id: userData.admin_id,
+            email: userData.email,
+            first_name: userData.first_name,
+            last_name: userData.last_name,
+            profile_url: userData.profile_url,
+            roles: userRoles // ส่งค่าเป็น Array เช่น ["admin", "editor_manage_case"]
+        }), { 
+            status: 200, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
 
       } else {
         // กรณีไม่พบ Email นี้ในฐานข้อมูลระบบ
