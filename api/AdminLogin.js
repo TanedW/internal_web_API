@@ -1,10 +1,9 @@
 // api/AdminLogin.js
+import { neon } from '@neondatabase/serverless';
 
 export const config = {
   runtime: 'edge',
 };
-
-import { neon } from '@neondatabase/serverless';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*', 
@@ -12,138 +11,70 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-// ฟังก์ชันบันทึก Log
-async function saveLoginLog(sql, { adminId, ipAddress, status, email, first_name, last_name, userAgent }) {
-  try {
-    await sql`
-      INSERT INTO admin_system_logs 
-      (admin_id, email, ip_address, status, action_type, first_name, last_name, user_agent)
-      VALUES (
-        ${adminId}, 
-        ${email}, 
-        ${ipAddress}, 
-        ${status}, 
-        'ADMIN_LOGIN', 
-        ${first_name || null}, 
-        ${last_name || null}, 
-        ${userAgent}
-      );
-    `;
-  } catch (e) {
-    console.error("Error saving log:", e);
-  }
-}
-
 export default async function handler(req) {
-  
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   if (req.method === 'POST') {
-    const forwarded = req.headers.get('x-forwarded-for');
-    const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
-    const userAgent = req.headers.get('user-agent') || null;
-    
-    let email = null; 
-    let first_name = null;
-    let last_name = null;
-    let profile_url = null;
-    
     try {
-      const body = await req.json();
-      email = body.email;
-      first_name = body.first_name;
-      last_name = body.last_name;
-      profile_url = body.profile_url;
-      const { access_token } = body;
-      
-      const sql = neon(process.env.DATA_BASE_URL);
+      const { email, first_name, last_name } = await req.json();
+      const sql = neon(process.env.DATABASE_URL);
 
-      // Check existing user
-      const existingUser = await sql`SELECT * FROM admin_system WHERE "email" = ${email} LIMIT 1`;
+      // 1. ตรวจสอบ User ใน Database
+      const existingUser = await sql`SELECT * FROM admin_system WHERE email = ${email} LIMIT 1`;
 
       if (existingUser.length > 0) {
-        const user = existingUser[0];
+        // 2. ดึงสิทธิ์จาก Permit.io (ใช้ API ของ Permit โดยตรง)
+        const PERMIT_API_KEY = process.env.PERMIT_API_KEY; // ใส่ใน Environment Variable
+        
+        const permitResponse = await fetch(
+          `https://api.permit.io/v2/facts/${process.env.PERMIT_PROJECT_ID}/${process.env.PERMIT_ENV_ID}/users/${email}/roles`,
+          {
+            headers: {
+              'Authorization': `Bearer ${PERMIT_API_KEY}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
 
-        // --- เพิ่มการเช็ค is_deleted ---
-        if (user.is_deleted === true) {
-            await saveLoginLog(sql, {
-                adminId: user.admin_id,
-                email: email,
-                first_name, 
-                last_name, 
-                ipAddress, 
-                userAgent, 
-                status: 'FAILED_DELETED' // ระบุว่าถูกลบ/ระงับ
-            });
-
-            return new Response(JSON.stringify({ 
-                message: 'Access Denied: This account has been deactivated.' 
-            }), { 
-                status: 403, 
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
+        let roles = [];
+        if (permitResponse.ok) {
+          const permitData = await permitResponse.json();
+          // permitData มักจะเป็น Array ของ Object เช่น [{ role: 'admin', ... }]
+          roles = permitData.map(r => r.role);
         }
 
-        // --- Case 1: พบผู้ใช้ในระบบ และสถานะปกติ -> อนุญาตให้ Login ---
+        // 3. Update ข้อมูลการ Login ล่าสุด
         const updatedUser = await sql`
-            UPDATE admin_system SET 
-              "access_token" = ${access_token}, 
-              "last_name" = ${last_name}, 
-              "first_name" = ${first_name},
-              "profile_url" = ${profile_url}
-            WHERE "email" = ${email} 
-            RETURNING *;
-          `;
-        
-        await saveLoginLog(sql, {
-          adminId: updatedUser[0].admin_id, 
-          email: email,
-          first_name, 
-          last_name, 
-          ipAddress, 
-          userAgent,
-          status: 'SUCCESS'
-        });
+          UPDATE admin_system 
+          SET first_name = ${first_name}, last_name = ${last_name}, last_login = NOW()
+          WHERE email = ${email}
+          RETURNING *;
+        `;
 
-        return new Response(JSON.stringify(updatedUser[0]), { 
+        // 4. ส่งข้อมูล User พร้อม Roles กลับไป
+        const userData = {
+          ...updatedUser[0],
+          roles: roles.length > 0 ? roles : ['guest'] // ถ้าไม่มีสิทธิ์เลยให้เป็น guest
+        };
+
+        return new Response(JSON.stringify(userData), { 
             status: 200, 
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
 
       } else {
-        // --- Case 2: ไม่พบอีเมลนี้ในระบบเลย ---
-        await saveLoginLog(sql, {
-          adminId: null,
-          email: email,
-          first_name, 
-          last_name, 
-          ipAddress, 
-          userAgent, 
-          status: 'FAILED_UNAUTHORIZED'
-        });
-
-        return new Response(JSON.stringify({ 
-            message: 'Access Denied: Your email is not authorized.' 
-        }), { 
+        return new Response(JSON.stringify({ message: 'Access Denied' }), { 
             status: 403,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
-
     } catch (error) {
-      console.error("API Error:", error);
-      // ... (ส่วนบันทึก Error Log คงเดิม)
-      return new Response(JSON.stringify({ message: 'An error occurred', error: error.message }), { 
-          status: 500, 
+      return new Response(JSON.stringify({ message: 'Error', error: error.message }), { 
+          status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
   }
-
-  return new Response(JSON.stringify({ message: `Method ${req.method} Not Allowed` }), { 
-      status: 405, 
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-  });
 }
