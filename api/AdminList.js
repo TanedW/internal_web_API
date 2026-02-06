@@ -48,6 +48,7 @@ export default async function handler(req, res) {
     // GET: ดึงข้อมูล + ดึง Roles (Array) สดๆ จาก Permit
     // =================================================================
     if (req.method === 'GET') {
+      res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=30');
       let canDelete = false;
 
       if (requester_id) {
