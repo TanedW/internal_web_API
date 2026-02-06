@@ -56,9 +56,11 @@ export default async function handler(req, res) {
            // 1. เช็คสิทธิ์การลบ
            canDelete = await permit.check(String(requester_id), "delete", "Admin_User");
            
+           
            // 2. ดึง Roles ทั้งหมดของคนเรียก (requester) มาดูเพื่อ Debug
            const userRoles = await permit.api.users.getAssignedRoles({ 
-               user: String(requester_id), 
+              //  user: String(requester_id),
+              type: "Admin_user" 
                tenant: "default" 
            });
            const roleNames = userRoles.map(r => r.role);
