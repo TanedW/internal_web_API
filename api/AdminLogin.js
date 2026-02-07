@@ -147,7 +147,9 @@ export default async function handler(req) {
       console.error("API Critical Error:", error);
       return new Response(JSON.stringify({ message: 'Internal Server Error', error: error.message }), { 
           status: 500, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json', 
+            'Set-Cookie': `access_token=${access_token}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=86400`
+          }
       });
     }
   }
