@@ -131,6 +131,28 @@ erDiagram
 
 Handles admin login.
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+    participant Permit
+
+    Client->>API: POST /api/AdminLogin (email, first_name, last_name, profile_url, access_token)
+    API->>Database: SELECT * FROM admin_system WHERE email = ?
+    alt User exists
+        Database-->>API: User data
+        API->>Permit: Get user roles
+        Permit-->>API: User roles
+        API->>Database: UPDATE admin_system SET ... WHERE email = ?
+        Database-->>API: Updated user data
+        API-->>Client: 200 OK (admin_id, email, roles)
+    else User does not exist
+        Database-->>API: Not found
+        API-->>Client: 403 Forbidden
+    end
+```
+
 -   **Request Body:**
     -   `email` (string, required): The admin's email.
     -   `first_name` (string): The admin's first name.
@@ -148,12 +170,54 @@ Handles admin login.
 
 Retrieves a list of all admins.
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+    participant Permit
+
+    Client->>API: GET /api/AdminList
+    API->>Database: SELECT * FROM admin_system WHERE is_deleted = false
+    Database-->>API: List of admins
+    loop for each admin
+        API->>Permit: Get assigned roles for admin
+        Permit-->>API: Admin roles
+    end
+    API-->>Client: 200 OK (List of admins with roles)
+```
+
 -   **Responses:**
     -   `200 OK`: Returns an array of admin objects.
 
 #### `POST /api/AdminList`
 
 Creates a new admin or reactivates a deleted one.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+    participant Permit
+
+    Client->>API: POST /api/AdminList (current_admin_id, email, role)
+    API->>Database: SELECT * FROM admin_system WHERE email = ?
+    alt User exists
+        Database-->>API: User data
+        alt User is deleted
+            API->>Database: UPDATE admin_system SET is_deleted = false WHERE email = ?
+            Database-->>API: Reactivated user data
+        end
+    else User does not exist
+        Database-->>API: Not found
+        API->>Database: INSERT INTO admin_system (email) VALUES (?)
+        Database-->>API: New user data
+    end
+    API->>Permit: Sync user and assign role
+    Permit-->>API: Success
+    API-->>Client: 200 OK (User data)
+```
 
 -   **Request Body:**
     -   `current_admin_id` (integer, required): The ID of the admin performing the action.
@@ -166,6 +230,18 @@ Creates a new admin or reactivates a deleted one.
 #### `PUT /api/AdminList?id=<admin_id>`
 
 Updates an admin's information.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: PUT /api/AdminList?id=<admin_id> (current_admin_id, email, first_name, last_name)
+    API->>Database: UPDATE admin_system SET ... WHERE admin_id = ?
+    Database-->>API: Updated user data
+    API-->>Client: 200 OK (Updated user data)
+```
 
 -   **URL Parameters:**
     -   `id` (integer, required): The ID of the admin to update.
@@ -183,6 +259,28 @@ Updates an admin's information.
 
 Soft deletes an admin.
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+    participant Permit
+
+    Client->>API: DELETE /api/AdminList?id=<admin_id> (current_admin_id)
+    API->>Permit: Check permission for current_admin_id to delete Admin_Users
+    alt Permitted
+        Permit-->>API: true
+        API->>Database: UPDATE admin_system SET is_deleted = true WHERE admin_id = ?
+        Database-->>API: Success
+        API->>Permit: Delete user from Permit
+        Permit-->>API: Success
+        API-->>Client: 200 OK (Deactivated successfully)
+    else Not Permitted
+        Permit-->>API: false
+        API-->>Client: 403 Forbidden
+    end
+```
+
 -   **URL Parameters:**
     -   `id` (integer, required): The ID of the admin to delete.
 -   **Request Body:**
@@ -199,6 +297,20 @@ Soft deletes an admin.
 
 Searches for a case and its associated media.
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: GET /api/cases/search_case?id=<ticket_id>
+    API->>Database: SELECT * FROM voice_message WHERE ticket_id = ?
+    Database-->>API: Case data
+    API->>Database: SELECT * FROM voice_attachment WHERE message_id = ?
+    Database-->>API: Timeline data
+    API-->>Client: 200 OK (Case data with timeline)
+```
+
 -   **URL Parameters:**
     -   `id` (string, required): The `ticket_id` to search for.
 -   **Responses:**
@@ -209,6 +321,21 @@ Searches for a case and its associated media.
 #### `PUT /api/cases/manage_case?id=<case_id>`
 
 Updates a media item's URL within a case.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: PUT /api/cases/manage_case?id=<case_id> (current_admin_id, photo_id, file_url, ...)
+    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
+    Database-->>API: Admin data
+    API->>Database: UPDATE voice_attachment SET photo = ?, ... WHERE id = ?
+    Database-->>API: Updated media data
+    API->>Database: INSERT INTO admin_system_logs (...)
+    API-->>Client: 200 OK (Success)
+```
 
 -   **URL Parameters:**
     -   `id` (string, required): The `case_id` of the case to update.
@@ -230,12 +357,39 @@ Updates a media item's URL within a case.
 
 Retrieves all Flex Messages.
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: GET /api/flex_message/manage_flex_message
+    API->>Database: SELECT * FROM flex_message WHERE is_deleted = false
+    Database-->>API: List of Flex Messages
+    API-->>Client: 200 OK (List of Flex Messages)
+```
+
 -   **Responses:**
     -   `200 OK`: Returns an array of Flex Message objects.
 
 #### `POST /api/flex_message/manage_flex_message`
 
 Creates a new Flex Message.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: POST /api/flex_message/manage_flex_message (current_admin_id, flex_name, ...)
+    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
+    Database-->>API: Admin data
+    API->>Database: INSERT INTO flex_message (...) VALUES (...)
+    Database-->>API: New Flex Message data
+    API->>Database: INSERT INTO admin_system_logs (...)
+    API-->>Client: 201 Created (New Flex Message data)
+```
 
 -   **Request Body:**
     -   `current_admin_id` (integer, required): The ID of the admin performing the action.
@@ -250,6 +404,21 @@ Creates a new Flex Message.
 #### `PUT /api/flex_message/manage_flex_message?id=<flex_id>`
 
 Updates a Flex Message.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: PUT /api/flex_message/manage_flex_message?id=<flex_id> (current_admin_id, flex_name, ...)
+    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
+    Database-->>API: Admin data
+    API->>Database: UPDATE flex_message SET ... WHERE id = ?
+    Database-->>API: Updated Flex Message data
+    API->>Database: INSERT INTO admin_system_logs (...)
+    API-->>Client: 200 OK (Updated Flex Message data)
+```
 
 -   **URL Parameters:**
     -   `id` (integer, required): The ID of the Flex Message to update.
@@ -268,6 +437,21 @@ Updates a Flex Message.
 
 Soft deletes a Flex Message.
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: DELETE /api/flex_message/manage_flex_message?id=<flex_id> (current_admin_id)
+    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
+    Database-->>API: Admin data
+    API->>Database: UPDATE flex_message SET is_deleted = true WHERE id = ?
+    Database-->>API: Success
+    API->>Database: INSERT INTO admin_system_logs (...)
+    API-->>Client: 200 OK (Deleted successfully)
+```
+
 -   **URL Parameters:**
     -   `id` (integer, required): The ID of the Flex Message to delete.
 -   **Request Body:**
@@ -283,6 +467,18 @@ Soft deletes a Flex Message.
 
 Searches for an organization by ID or name.
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: GET /api/organization/search_org?q=<query>
+    API->>Database: SELECT * FROM voice_fonduegroup WHERE id = ? OR name ILIKE ?
+    Database-->>API: List of organizations
+    API-->>Client: 200 OK (List of organizations)
+```
+
 -   **URL Parameters:**
     -   `q` (string, required): The ID or name to search for.
 -   **Responses:**
@@ -293,6 +489,21 @@ Searches for an organization by ID or name.
 #### `PUT /api/organization/manage_org?id=<group_id>`
 
 Updates or restores an organization.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: PUT /api/organization/manage_org?id=<group_id> (current_admin_id, name, ...)
+    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
+    Database-->>API: Admin data
+    API->>Database: UPDATE voice_fonduegroup SET ... WHERE id = ?
+    Database-->>API: Updated organization data
+    API->>Database: INSERT INTO admin_system_logs (...)
+    API-->>Client: 200 OK (Updated organization data)
+```
 
 -   **URL Parameters:**
     -   `id` (integer, required): The ID of the organization to update.
@@ -317,6 +528,21 @@ Updates or restores an organization.
 #### `DELETE /api/organization/manage_org?id=<group_id>`
 
 Soft deletes an organization.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: DELETE /api/organization/manage_org?id=<group_id> (current_admin_id, description)
+    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
+    Database-->>API: Admin data
+    API->>Database: UPDATE voice_fonduegroup SET deleted_at = NOW() WHERE id = ?
+    Database-->>API: Success
+    API->>Database: INSERT INTO admin_system_logs (...)
+    API-->>Client: 200 OK (Deleted successfully)
+```
 
 -   **URL Parameters:**
     -   `id` (integer, required): The ID of the organization to delete.
