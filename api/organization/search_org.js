@@ -20,7 +20,6 @@ export default async function handler(req) {
   const sql = neon(process.env.DATA_BASE_URL);
   const { searchParams } = new URL(req.url);
   
-  // รับค่า query parameter 'q' ซึ่งอาจจะเป็น ID หรือ Name ก็ได้
   const query = searchParams.get('q'); 
 
   try {
@@ -32,40 +31,42 @@ export default async function handler(req) {
         });
       }
 
-      // ตรวจสอบว่าเป็นตัวเลขหรือไม่ เพื่อแยกแยะการค้นหาด้วย ID หรือ Name
       const isNumeric = !isNaN(query);
 
       // -----------------------------------------------------
-      // ค้นหาข้อมูลจากตาราง voice_fonduegroup
+      // ค้นหาข้อมูลกลุ่ม พร้อม Join ข้อมูล QR Code (type_qr = 'report-org')
       // -----------------------------------------------------
-const groups = await sql`
-SELECT 
-    g.id,
-    g.name,
-    g.photo,
-    g.official_group, -- ดึงค่า boolean ของ Official Account
-    g.download_csv,      -- ดึงค่า boolean ของสิทธิ์การดาวน์โหลด CSV
-    -- ถ้า deleted_at เป็น null ให้บอกว่า 'active' ถ้ามีค่าให้ส่ง 'deleted'
-    CASE 
-      WHEN g.deleted_at IS NULL THEN 'active'
-      ELSE 'deleted' 
-    END AS status,
-    g.deleted_at,
-    COALESCE(
-      json_agg(
-        json_build_object(
-          'id', c.id,
-          'code', c.code,
-          'code_staff', c.code_staff
-        )
-      ) FILTER (WHERE c.id IS NOT NULL), '[]'
-    ) AS admin_codes
-  FROM voice_fonduegroup g
-  LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
-  WHERE 
-    ${isNumeric ? sql`g.id = ${parseInt(query)}` : sql`g.name ILIKE ${'%' + query + '%'}`}
-  GROUP BY g.id;
-    `;
+      const groups = await sql`
+        SELECT 
+          g.id,
+          g.name,
+          g.photo,
+          g.official_group,
+          g.download_csv,
+          CASE 
+            WHEN g.deleted_at IS NULL THEN 'active'
+            ELSE 'deleted' 
+          END AS status,
+          g.deleted_at,
+          -- ดึง uuid_qr จากตาราง QR (ระบุชื่อตารางจริงของคุณแทน your_qr_table)
+          q.uuid_qr,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', c.id,
+                'code', c.code,
+                'code_staff', c.code_staff
+              )
+            ) FILTER (WHERE c.id IS NOT NULL), '[]'
+          ) AS admin_codes
+        FROM voice_fonduegroup g
+        LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
+        -- JOIN กับตารางที่เก็บข้อมูลตามรูปภาพที่คุณแนบมา
+        LEFT JOIN voice_qrcodefonduegroup q ON g.id = q.group_id AND q.type_qr = 'report-org'
+        WHERE 
+          ${isNumeric ? sql`g.id = ${parseInt(query)}` : sql`g.name ILIKE ${'%' + query + '%'}`}
+        GROUP BY g.id, q.uuid_qr; -- เพิ่ม q.uuid_qr ใน Group By
+      `;
 
       if (groups.length === 0) {
         return new Response(JSON.stringify({ found: false, message: 'Group not found' }), {
@@ -74,9 +75,19 @@ SELECT
         });
       }
 
+      // -----------------------------------------------------
+      // สร้าง Full URL สำหรับ QR Code ให้แต่ละรายการ
+      // -----------------------------------------------------
+      const mappedGroups = groups.map(group => ({
+        ...group,
+        qr_report_url: group.uuid_qr 
+          ? `https://storage.googleapis.com/traffy_public_bucket/traffy_fondue_qrcode/${group.uuid_qr}.jpg`
+          : null
+      }));
+
       return new Response(JSON.stringify({ 
         found: true, 
-        data: groups // ส่งกลับเป็น Array เพราะการค้นหาด้วยชื่ออาจเจอหลายรายการ
+        data: mappedGroups 
       }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
