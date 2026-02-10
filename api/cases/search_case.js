@@ -19,7 +19,7 @@ export default async function handler(req) {
 
   const sql = neon(process.env.DATA_BASE_URL);
   const { searchParams } = new URL(req.url);
-  const id = searchParams.get('id'); // รับ ticket_id (เช่น TKT-20260115-0001)
+  const id = searchParams.get('id');
 
   try {
     if (req.method === 'GET') {
@@ -31,20 +31,25 @@ export default async function handler(req) {
       }
 
       // -----------------------------------------------------
-      // STEP 1: ค้นหาข้อมูลหลักจากตาราง voice_message
+      // STEP 1: ค้นหาข้อมูลหลัก + ข้อมูล QR Code (type_qr = 'report-org')
       // -----------------------------------------------------
+      // ทำการ Left Join กับตาราง QR โดยใช้ group_id เป็นตัวเชื่อม
       const cases = await sql`
         SELECT 
-          id,
-          ticket_id,
-          problem_type,
-          address,
-          status,
-          comment,
-          timestamp,
-          ST_AsText(point) as location -- แปลงพิกัดเป็น Text (เช่น "POINT(100.5 13.7)") เพื่อให้อ่านง่าย
-        FROM voice_message
-        WHERE ticket_id = ${id}
+          v.id,
+          v.ticket_id,
+          v.problem_type,
+          v.address,
+          v.status,
+          v.comment,
+          v.timestamp,
+          v.group_id,
+          ST_AsText(v.point) as location,
+          q.uuid_qr
+        FROM voice_message v
+        LEFT JOIN voice_qrcodefonduegroup q ON v.group_id = q.group_id AND q.type_qr = 'report-org'
+        WHERE v.ticket_id = ${id}
+        LIMIT 1
       `;
 
       if (cases.length === 0) {
@@ -54,24 +59,23 @@ export default async function handler(req) {
         });
       }
 
-      const foundCase = cases[0]; // เก็บข้อมูล Case หลักไว้
+      const foundCase = cases[0];
+
+      // สร้าง URL สำหรับ QR Code ถ้ามี uuid_qr
+      const qrImageUrl = foundCase.uuid_qr 
+        ? `https://storage.googleapis.com/traffy_public_bucket/traffy_fondue_qrcode/${foundCase.uuid_qr}.jpg`
+        : null;
 
       // -----------------------------------------------------
-      // STEP 2: ค้นหา Timeline/รูปภาพ จาก voice_attachment ผ่านตารางกลาง
+      // STEP 2: ค้นหา Timeline/รูปภาพ (เหมือนเดิม)
       // -----------------------------------------------------
-      // ใช้ ID (Integer) จาก Step 1 มาค้นหาความสัมพันธ์
       const timeline = await sql`
         SELECT 
-          a.id, 
-          a.note, 
-          a.viewed, -- (0=img/text, 1=video, 2=file, 3=audio)
-          a.photo, 
-          a.updated_on, 
-          a.status
+          a.id, a.note, a.viewed, a.photo, a.updated_on, a.status
         FROM voice_attachment a
         JOIN voice_message_photos mp ON a.id = mp.attachment_id
         WHERE mp.message_id = ${foundCase.id}
-        ORDER BY a.updated_on ASC; -- เรียงตามลำดับเวลาที่เกิดขึ้น
+        ORDER BY a.updated_on ASC;
       `;
 
       // -----------------------------------------------------
@@ -79,7 +83,8 @@ export default async function handler(req) {
       // -----------------------------------------------------
       const resultData = {
         ...foundCase,
-        timeline: timeline // ส่งกลับเป็น Array ของเหตุการณ์ทั้งหมด
+        qr_report_url: qrImageUrl, // เพิ่ม Field URL รูปภาพ QR เข้าไป
+        timeline: timeline 
       };
 
       return new Response(JSON.stringify({ 
