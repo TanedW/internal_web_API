@@ -30,21 +30,21 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
 }
 
 export default async function handler(req, res) {
-  // 1. ดึงค่าจาก Header 'origin' ที่เบราว์เซอร์ส่งมาให้ (เช่น http://localhost:3001)
+  // 1. ดึงค่าจาก Header 'origin'
   const origin = req.headers.origin;
 
-  // 2. ถ้ามีค่า origin ส่งมา ให้สะท้อนค่านั้นกลับไปใน Header
+  // 2. ตั้งค่า CORS ให้รองรับ Credentials
   if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Origin', origin); // ห้ามใช้ '*' เด็ดขาด
   }
-
-  // 3. อนุญาตให้ส่ง Credentials (Cookie)
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  
+  res.setHeader('Access-Control-Allow-Credentials', 'true'); // อนุญาตให้ส่ง Cookie
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  // 3. สำคัญมาก: ต้องตอบกลับ OPTIONS Request ทันที!
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end(); 
+  }
 
   const sql = neon(process.env.DATA_BASE_URL);
   const { id, requester_id } = req.query; 
