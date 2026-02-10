@@ -30,9 +30,28 @@ async function saveAdminLog(sql, { adminId, email, first_name, last_name, action
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', 'true');
+  // 1. ดึง Origin จาก Request ที่ส่งมา
+  const origin = req.headers.origin;
+
+  // 2. ตรวจสอบเงื่อนไข (เลือกใช้อย่างใดอย่างหนึ่ง)
+  
+  // แบบ A: ยืดหยุ่นที่สุด (ยอมรับทุก Origin ที่ส่ง Credentials มา)
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+
+  // แบบ B: ปลอดภัยขึ้นมาหน่อย (เช็คเฉพาะที่เป็น localhost หรือ domain ของเรา)
+  // if (origin && (origin.startsWith('http://localhost') || origin.endsWith('yourdomain.com'))) {
+  //   res.setHeader('Access-Control-Allow-Origin', origin);
+  // }
+
+  res.setHeader('Access-Control-Allow-Credentials', 'true'); // จำเป็นสำหรับ HttpOnly Cookie
+  
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  
+  // 3. สำคัญมาก: ต้องอนุญาตการส่ง Credentials (Cookies)
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
