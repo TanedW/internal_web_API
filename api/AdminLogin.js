@@ -1,8 +1,8 @@
 // api/AdminLogin.js
 
-// export const config = {
-//   runtime: 'edge',
-// };
+export const config = {
+  runtime: 'edge',
+};
 
 import { neon } from '@neondatabase/serverless';
 import { Permit } from "permitio";
