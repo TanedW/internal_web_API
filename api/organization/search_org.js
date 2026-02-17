@@ -58,7 +58,7 @@ export default async function handler(req) {
                 'code_staff', c.code_staff
               )
             ) FILTER (WHERE c.id IS NOT NULL), '[]'
-          ) AS admin_codes
+          ) AS admin_codes,
           COALESCE(
             json_agg(DISTINCT
               json_build_object(
