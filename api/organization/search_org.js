@@ -70,7 +70,7 @@ export default async function handler(req) {
                 'created_on', m.created_on 
               )
             ) FILTER (WHERE c.id IS NOT NULL), '[]'
-          ) AS admin_codes
+          ) AS members
         FROM voice_fonduegroup g
         LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
         -- JOIN กับตารางที่เก็บข้อมูลตามรูปภาพที่คุณแนบมา
