@@ -66,7 +66,7 @@ export default async function handler(req) {
                 'member_name', m.name,
                 'member_phone', m.phone,
                 'role', m.role,
-                'user_id', m.userid,
+                'user_id', m.user_id,
                 'created_on', m.created_on 
               )
             ) FILTER (WHERE c.id IS NOT NULL), '[]'
