@@ -51,11 +51,23 @@ export default async function handler(req) {
           -- ดึง uuid_qr จากตาราง QR (ระบุชื่อตารางจริงของคุณแทน your_qr_table)
           q.uuid_qr,
           COALESCE(
-            json_agg(
+            json_agg(DISTINCT
               json_build_object(
                 'id', c.id,
                 'code', c.code,
                 'code_staff', c.code_staff
+              )
+            ) FILTER (WHERE c.id IS NOT NULL), '[]'
+          ) AS admin_codes
+          COALESCE(
+            json_agg(DISTINCT
+              json_build_object(
+                'member', m.id,
+                'member_name', m.name,
+                'member_phone', m.phone,
+                'role', m.role,
+                'user_id', m.userid,
+                'created_on', m.created_on 
               )
             ) FILTER (WHERE c.id IS NOT NULL), '[]'
           ) AS admin_codes
@@ -64,6 +76,7 @@ export default async function handler(req) {
         -- JOIN กับตารางที่เก็บข้อมูลตามรูปภาพที่คุณแนบมา
         LEFT JOIN voice_qrcodefonduegroup q ON g.id = q.group_id AND q.type_qr = 'report-org'
         WHERE 
+        LEFT JOIN voice_fonduegroup_member m ON g.id = m.group_id
           ${isNumeric ? sql`g.id = ${parseInt(query)}` : sql`g.name ILIKE ${'%' + query + '%'}`}
         GROUP BY g.id, q.uuid_qr; -- เพิ่ม q.uuid_qr ใน Group By
       `;
