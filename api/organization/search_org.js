@@ -52,7 +52,7 @@ export default async function handler(req) {
           q.uuid_qr,
           COALESCE(
             json_agg(DISTINCT
-              json_build_object(
+              jsonb_build_object(
                 'id', c.id,
                 'code', c.code,
                 'code_staff', c.code_staff
@@ -60,8 +60,8 @@ export default async function handler(req) {
             ) FILTER (WHERE c.id IS NOT NULL), '[]'
           ) AS admin_codes,
           COALESCE(
-            json_agg(DISTINCT
-              json_build_object(
+            jsonb_agg(DISTINCT
+              jsonb_build_object(
                 'member', m.id,
                 'member_name', m.name,
                 'member_phone', m.phone,
