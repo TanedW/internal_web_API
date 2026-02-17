@@ -75,8 +75,10 @@ export default async function handler(req) {
         LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
         -- JOIN กับตารางที่เก็บข้อมูลตามรูปภาพที่คุณแนบมา
         LEFT JOIN voice_qrcodefonduegroup q ON g.id = q.group_id AND q.type_qr = 'report-org'
-        WHERE 
         LEFT JOIN voice_fonduegroup_member m ON g.id = m.group_id
+
+        WHERE 
+        
           ${isNumeric ? sql`g.id = ${parseInt(query)}` : sql`g.name ILIKE ${'%' + query + '%'}`}
         GROUP BY g.id, q.uuid_qr; -- เพิ่ม q.uuid_qr ใน Group By
       `;
