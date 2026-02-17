@@ -89,6 +89,7 @@ export default async function handler(req, res) {
           console.error(`Permit.io Error for UUID ${userUuid}:`, permitError.message);
         }
 
+        console.log(`User ${email} has roles:`, userRoles);
         // 4. อัปเดตข้อมูลการเข้าใช้งาน
         const updatedUser = await sql`
             UPDATE admin_system SET 
