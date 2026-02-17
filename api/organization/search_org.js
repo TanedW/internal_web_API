@@ -75,7 +75,7 @@ export default async function handler(req) {
         LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
         -- JOIN กับตารางที่เก็บข้อมูลตามรูปภาพที่คุณแนบมา
         LEFT JOIN voice_qrcodefonduegroup q ON g.id = q.group_id AND q.type_qr = 'report-org'
-        LEFT JOIN voice_fonduegroup_member m ON g.id = m.group_id
+        LEFT JOIN voice_fonduegroupmember m ON g.id = m.group_id
 
         WHERE 
         
