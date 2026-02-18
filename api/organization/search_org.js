@@ -1,5 +1,5 @@
 // api/organization/search_org.js
-
+// test
 export const config = {
   runtime: 'edge',
 };
