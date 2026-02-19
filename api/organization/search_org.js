@@ -1,10 +1,6 @@
 // api/organization/search_org.js
-// test
-export const config = {
-  runtime: 'edge',
-};
 
-import { neon } from '@neondatabase/serverless';
+import { query } from '../lib/db.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,31 +8,23 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-export default async function handler(req) {
+export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return res.status(200).end();
   }
 
-  const sql = neon(process.env.DATA_BASE_URL);
-  const { searchParams } = new URL(req.url);
-  
-  const query = searchParams.get('q'); 
+  const { q: searchQueryRaw } = req.query;
 
   try {
     if (req.method === 'GET') {
-      if (!query) {
-        return new Response(JSON.stringify({ found: false, message: 'Search query (ID or Name) is required' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+      if (!searchQueryRaw) {
+        return res.status(400).json({ found: false, message: 'Search query (ID or Name) is required' });
       }
 
-      const isNumeric = !isNaN(query);
+      const isNumeric = !isNaN(searchQueryRaw);
+      const searchQuery = isNumeric ? parseInt(searchQueryRaw) : `%${searchQueryRaw}%`;
 
-      // -----------------------------------------------------
-      // ค้นหาข้อมูลกลุ่ม พร้อม Join ข้อมูล QR Code (type_qr = 'report-org')
-      // -----------------------------------------------------
-      const groups = await sql`
+      const { rows: groups } = await query(`
         SELECT 
           g.id,
           g.name,
@@ -48,54 +36,28 @@ export default async function handler(req) {
             ELSE 'deleted' 
           END AS status,
           g.deleted_at,
-          -- ดึง uuid_qr จากตาราง QR (ระบุชื่อตารางจริงของคุณแทน your_qr_table)
           q.uuid_qr,
           COALESCE(
-            json_agg(DISTINCT
-              jsonb_build_object(
+            json_agg(
+              json_build_object(
                 'id', c.id,
                 'code', c.code,
                 'code_staff', c.code_staff
               )
             ) FILTER (WHERE c.id IS NOT NULL), '[]'
-          ) AS admin_codes,
-          COALESCE(
-            jsonb_agg(DISTINCT
-              jsonb_build_object(
-                'member', m.id,
-                'picture_profile', u.document_url,
-                'member_name', m.name,
-                'member_phone', m.phone,
-                'email', u.email,
-                'role', m.role,
-                'user_id', m.user_id,
-                'created_on', m.created_on 
-              )
-            ) FILTER (WHERE m.id IS NOT NULL), '[]'
-          ) AS members
+          ) AS admin_codes
         FROM voice_fonduegroup g
         LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
-        -- JOIN กับตารางที่เก็บข้อมูลตามรูปภาพที่คุณแนบมา
         LEFT JOIN voice_qrcodefonduegroup q ON g.id = q.group_id AND q.type_qr = 'report-org'
-        LEFT JOIN voice_fonduegroupmember m ON g.id = m.group_id
-        LEFT JOIN traffy_user u ON m.user_id = u.id
-
         WHERE 
-        
-          ${isNumeric ? sql`g.id = ${parseInt(query)}` : sql`g.name ILIKE ${'%' + query + '%'}`}
-        GROUP BY g.id, q.uuid_qr; -- เพิ่ม q.uuid_qr ใน Group By
-      `;
+          ${isNumeric ? 'g.id = $1' : 'g.name ILIKE $1'}
+        GROUP BY g.id, q.uuid_qr;
+      `, [searchQuery]);
 
       if (groups.length === 0) {
-        return new Response(JSON.stringify({ found: false, message: 'Group not found' }), {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return res.status(404).json({ found: false, message: 'Group not found' });
       }
 
-      // -----------------------------------------------------
-      // สร้าง Full URL สำหรับ QR Code ให้แต่ละรายการ
-      // -----------------------------------------------------
       const mappedGroups = groups.map(group => ({
         ...group,
         qr_report_url: group.uuid_qr 
@@ -103,19 +65,16 @@ export default async function handler(req) {
           : null
       }));
 
-      return new Response(JSON.stringify({ 
+      return res.status(200).json({ 
         found: true, 
         data: mappedGroups 
-      }), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    return new Response(JSON.stringify({ message: 'Method Not Allowed' }), { status: 405, headers: corsHeaders });
+    return res.status(405).json({ message: 'Method Not Allowed' });
 
   } catch (error) {
     console.error("API Error:", error);
-    return new Response(JSON.stringify({ message: 'Error', error: error.message }), { status: 500, headers: corsHeaders });
+    return res.status(500).json({ message: 'Error', error: error.message });
   }
 }
