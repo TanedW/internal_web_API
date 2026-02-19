@@ -46,7 +46,7 @@ export const query = (text, params) => primaryPool.query(text, params);
 
 primaryPool.on('error', (err) => {
     console.error('Unexpected error on primary idle client', err);
-    process.exit(-1);
+    ;
 });
 
 replicaPool.on('error', (err) => {
