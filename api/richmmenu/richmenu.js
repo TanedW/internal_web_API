@@ -2,6 +2,7 @@
 // รวม Richmenu API ทุก endpoint ไว้ในไฟล์เดียว
 // Pattern เดียวกับ AdminList.js / AdminLogin.js
 // เทสสส
+//เทสอีกรอบ
 
 import pg from 'pg';
 const { Pool } = pg;
