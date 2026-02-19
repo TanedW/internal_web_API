@@ -56,7 +56,7 @@ export default async function handler(req, res) {
       // 1. รันงานขนานกัน: เช็คสิทธิ์การลบ + ดึงข้อมูลรายชื่อจาก DB
       const [canDelete, dbResult] = await Promise.all([
     requester_id 
-      ? permit.check(String(requester_id), "delete", { type: "Admin_user", tenant: "default" }).catch(() => false)
+      ? permit.check(String(requester_id), "delete", { type: "Admin_Users", tenant: "default" }).catch(() => false)
       : Promise.resolve(false),
     
     db.query(`
@@ -253,7 +253,7 @@ export default async function handler(req, res) {
             if (!actorAdmin) return res.status(403).json({ message: 'Unauthorized action' });
 
             // 1. Check Permission จาก Permit.io เหมือนเดิม
-            const isPermitted = await permit.check(String(actorAdmin.admin_id), "delete", "Admin_user");
+            const isPermitted = await permit.check(String(actorAdmin.admin_id), "delete", "Admin_Users");
 
             if (!isPermitted) {
               await saveAdminLog({
