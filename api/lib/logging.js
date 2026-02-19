@@ -1,8 +1,8 @@
-import { Logging } from '@google-cloud/logging';
+// import { Logging } from '@google-cloud/logging';
 
-const projectId = process.env.GOOGLE_CLOUD_PROJECT || 'traffy-cloud';
-const logName = 'audit-log';
-const logging = new Logging({ projectId });
+// const projectId = process.env.GOOGLE_CLOUD_PROJECT || 'traffy-cloud';
+// const logName = 'audit-log';
+// const logging = new Logging({ projectId });
 
 /**
  * Writes an audit log entry to Google Cloud Logging.
@@ -20,42 +20,42 @@ const logging = new Logging({ projectId });
  * @param {string} [severity='INFO'] - Log severity level. INFO (ทั่วไป), NOTICE (เหตุการณ์สำคัญ), WARNING (ผิดพลาดไม่ร้ายแรง), ERROR (พัง)
  */
 export async function writeAuditLog(logData, severity = 'INFO') {
-  try {
-    const log = logging.log(logName);
+//   try {
+//     const log = logging.log(logName);
 
-    const message = `${logData.actionType} - ${logData.email} (${logData.status})`;
+//     const message = `${logData.actionType} - ${logData.email} (${logData.status})`;
 
-    const payload = {
-      event_timestamp: new Date().toISOString(),
-      actor: {
-        id: logData.adminId,
-        email: logData.email,
-        first_name: logData.firstName,
-        last_name: logData.lastName,
-      },
-      activity: {
-        type: logData.actionType,
-        status: logData.status,
-        description: message,
-        details: logData.details || {},
-      },
-      network: {
-        ip_address: logData.ipAddress,
-        user_agent: logData.userAgent,
-      },
-      trace: {
-        generator: "fondue-internal-service"
-      }
-    };
+//     const payload = {
+//       event_timestamp: new Date().toISOString(),
+//       actor: {
+//         id: logData.adminId,
+//         email: logData.email,
+//         first_name: logData.firstName,
+//         last_name: logData.lastName,
+//       },
+//       activity: {
+//         type: logData.actionType,
+//         status: logData.status,
+//         description: message,
+//         details: logData.details || {},
+//       },
+//       network: {
+//         ip_address: logData.ipAddress,
+//         user_agent: logData.userAgent,
+//       },
+//       trace: {
+//         generator: "fondue-internal-service"
+//       }
+//     };
 
-    const entry = log.entry({
-      resource: { type: 'global' },
-      severity: severity,
-      textPayload: message,
-    }, payload);
+//     const entry = log.entry({
+//       resource: { type: 'global' },
+//       severity: severity,
+//       textPayload: message,
+//     }, payload);
 
-    await log.write(entry);
-  } catch (error) {
-    console.error('Error sending log to Google Cloud Logging:', error);
-  }
+//     await log.write(entry);
+//   } catch (error) {
+//     console.error('Error sending log to Google Cloud Logging:', error);
+//   }
 }
