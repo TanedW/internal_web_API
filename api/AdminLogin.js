@@ -7,14 +7,8 @@ import { writeAuditLog } from './lib/logging.js';
 // สร้าง Instance ของ Permit
 const permit = new Permit({
   pdp: "https://cloudpdp.api.permit.io",
-  token: process.env.PERMIT_API_KEY, // ตรวจสอบว่าได้ตั้งค่า API Key ใน Environment Variables แล้ว
+  token: process.env.PERMIT_API_KEY,
 });
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*', 
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
 
 // ฟังก์ชันบันทึก Log การเข้าใช้งาน
 async function saveLoginLog({ adminId, ipAddress, status, email, first_name, last_name, userAgent }) {
@@ -30,21 +24,30 @@ async function saveLoginLog({ adminId, ipAddress, status, email, first_name, las
   }, status === 'SUCCESS' ? 'INFO' : 'WARNING');
 }
 
-export default async function handler(req) {
-  
+export default async function handler(req, res) {
+  // จัดการ CORS Headers สำหรับ Node.js Runtime
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
   // จัดการ CORS Preflight
   if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return res.status(200).end();
   }
 
   if (req.method === 'POST') {
+    // ดึง IP และ User Agent จาก Headers (Node.js style)
     const forwarded = req.headers['x-forwarded-for'];
-    const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
-    const userAgent = req.headers['user-agent'];
+    const ipAddress = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'] || null;
     
     try {
-      const body = await req.body;
-      const { email, first_name, last_name, profile_url, access_token } = body;
+      // ดึงข้อมูลจาก req.body (Vercel จะ Parse JSON มาให้แล้ว ไม่ต้องใช้ await req.json())
+      const { email, first_name, last_name, profile_url, access_token } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ message: 'Email is required' });
+      }
       
       // 1. ค้นหา User ในฐานข้อมูลด้วย Email เพื่อดึง admin_id (UUID)
       const { rows: existingUser } = await query('SELECT * FROM admin_system WHERE "email" = $1 LIMIT 1', [email]);
@@ -61,16 +64,13 @@ export default async function handler(req) {
                 status: 'FAILED_DELETED'
             });
 
-            return new Response(JSON.stringify({ 
+            return res.status(403).json({ 
                 message: 'Access Denied: This account has been deactivated.' 
-            }), { 
-                status: 403, 
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
             });
         }
 
         // 3. ดึง Role จาก Permit.io โดยใช้ UUID (User Key)
-        let userRoles = 'guest'; // ค่าเริ่มต้นหากหาไม่เจอ
+        let userRoles = ['guest']; // ค่าเริ่มต้น
         try {
           const permitUser = await permit.api.getUser(userUuid.toString());
           if (permitUser && permitUser.roles && permitUser.roles.length > 0) {
@@ -102,17 +102,14 @@ export default async function handler(req) {
           status: 'SUCCESS'
         });
 
-        // 6. ส่งข้อมูลทั้งหมดพร้อม Role กลับไปยัง Frontend
-        return new Response(JSON.stringify({
+        // 6. ส่งข้อมูลกลับไปยัง Frontend (Node.js style)
+        return res.status(200).json({
             admin_id: userData.admin_id,
             email: userData.email,
             first_name: userData.first_name,
             last_name: userData.last_name,
             profile_url: userData.profile_url,
-            roles: userRoles // ส่งค่าเป็น Array เช่น ["admin", "editor_manage_case"]
-        }), { 
-            status: 200, 
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            roles: userRoles
         });
 
       } else {
@@ -122,28 +119,20 @@ export default async function handler(req) {
           status: 'FAILED_UNAUTHORIZED'
         });
 
-        return new Response(JSON.stringify({ 
+        return res.status(403).json({ 
             message: 'Access Denied: Your email is not authorized.' 
-        }), { 
-            status: 403,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
 
     } catch (error) {
       console.error("API Critical Error:", error);
-      return new Response(JSON.stringify({ message: 'Internal Server Error', error: error.message }), { 
-          status: 500, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json', 
-            'Set-Cookie': `access_token=${access_token}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=86400`
-          }
+      return res.status(500).json({ 
+          message: 'Internal Server Error', 
+          error: error.message 
       });
     }
   }
 
   // กรณี Method ไม่ใช่ POST
-  return new Response(JSON.stringify({ message: `Method ${req.method} Not Allowed` }), { 
-      status: 405, 
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-  });
+  return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
 }
