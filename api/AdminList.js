@@ -1,5 +1,5 @@
 // api/AdminList.js
-import 'dotenv/config'; // แทนที่ require('dotenv').config();import { query } from '../lib/db.js';
+import 'dotenv/config'; 
 import { Permit } from "permitio";
 import * as db from './lib/db.js'; // นำเข้าทั้งหมดเป็น db object
 import { writeAuditLog } from './lib/logging.js';
