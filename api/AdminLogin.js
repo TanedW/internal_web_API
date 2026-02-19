@@ -38,12 +38,12 @@ export default async function handler(req) {
   }
 
   if (req.method === 'POST') {
-    const forwarded = req.headers.get('x-forwarded-for');
+    const forwarded = req.headers['x-forwarded-for'];
     const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
-    const userAgent = req.headers.get('user-agent') || null;
+    const userAgent = req.headers['user-agent'];
     
     try {
-      const body = await req.json();
+      const body = await req.body;
       const { email, first_name, last_name, profile_url, access_token } = body;
       
       // 1. ค้นหา User ในฐานข้อมูลด้วย Email เพื่อดึง admin_id (UUID)
