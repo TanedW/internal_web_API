@@ -2,7 +2,8 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
-const isNeon = process.env.API_PY_HOST && process.env.API_PY_HOST.includes('neon');
+const isCloudDb = process.env.API_PY_HOST && 
+                 (process.env.API_PY_HOST.includes('neon') || process.env.PGSSLMODE === 'require');
 
 const baseConfig = {
   max: 10,
@@ -13,10 +14,9 @@ const baseConfig = {
   port: process.env.API_PY_PORT
 };
 
-if (isNeon) {
+if (isCloudDb) {
   baseConfig.ssl = {
-    rejectUnauthorized: false,
-    sslmode: process.env.PGSSLMODE
+    rejectUnauthorized: false
   };
 }
 
