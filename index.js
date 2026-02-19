@@ -1,119 +1,109 @@
+import 'dotenv/config';   
 import express from 'express';
 import cors from 'cors';
+import fs from 'fs';
 
-// 1. นำเข้าไฟล์ API ของคุณ
-// *** ตรวจสอบ path ให้ถูกต้องก่อนรันนะครับ ***
+const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
+
 import adminLoginHandler from './api/AdminLogin.js';
 import adminListHandler from './api/AdminList.js';
 import manageCaseHandler from './api/cases/manage_case.js'; 
 import searchCaseHandler from './api/cases/search_case.js';
-import manageFlexMessageHandler from './api/flex_message/manage_flex_message.js';
 import manageOrgHandler from './api/organization/manage_org.js';
 import searchOrgHandler from './api/organization/search_org.js';
-
-// --- ส่วนจัดการ Environment Variable ---
-// ถ้ามีตัวแปร DATA_BASE_URL (ของคุณ) ให้ก๊อปปี้ไปใส่ DATABASE_URL (มาตรฐาน)
-if (process.env.DATA_BASE_URL) {
-    process.env.DATABASE_URL = process.env.DATA_BASE_URL;
-}
-
-console.log("DEBUG: DATA_BASE_URL ->", process.env.DATA_BASE_URL ? "Set" : "Not Set");
-console.log("DEBUG: DATABASE_URL  ->", process.env.DATABASE_URL ? "Set" : "Not Set");
-// -------------------------------------
+import manageFlexHandler from './api/flex_message/manage_flex_message.js';
+import getAuditLogsHandler from './api/GetAuditLogs.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
 app.use(express.json());
-app.use(cors());
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        callback(null, origin);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+}));
 
 // ============================================================
-// 🔧 ADAPTER FUNCTION (ตัวช่วยแปลงร่าง)
-// หน้าที่: แปลง Request ของ Express ให้หน้าตาเหมือน Vercel Edge
+// 🔧 ADAPTER FUNCTION
 // ============================================================
 async function vercelAdapter(req, res, handler) {
     try {
-        // 1. สร้าง Full URL (แก้ปัญหา Invalid URL)
-        const fullUrl = `http://localhost:${PORT}${req.originalUrl}`;
+        const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
         
-        // 2. จำลอง Request Object แบบ Web Standard
         const webReq = {
-            url: fullUrl,
             method: req.method,
-            headers: { 
-                get: (key) => req.headers[key.toLowerCase()] // จำลองฟังก์ชัน .get()
+            url: fullUrl,
+            headers: {
+                get: (key) => req.headers[key.toLowerCase()],
+                ...req.headers
             },
-            // จำลองฟังก์ชัน .json() โดยส่ง body ที่ express แกะมาให้แล้วกลับไป
-            json: async () => req.body 
+            query: req.query,
+            body: req.body,
+            json: async () => req.body,
+            text: async () => JSON.stringify(req.body)
         };
 
-        // 3. เรียกใช้ Handler เดิมของคุณ
-        const response = await handler(webReq);
+        const response = await handler(webReq, res);
 
-        // 4. แปลง Response กลับเป็น Express เพื่อส่งคืน Client
-        // (เช็คก่อนว่ามี content type เป็น json ไหม)
-        const contentType = response.headers.get('content-type') || '';
-        
-        if (contentType.includes('application/json')) {
-            const data = await response.json();
-            res.status(response.status).json(data);
-        } else {
-            // กรณี return เป็น text หรืออย่างอื่น
-            const text = await response.text();
-            res.status(response.status).send(text);
+        if (res.headersSent) return;
+
+        if (response instanceof Response) {
+            const contentType = response.headers.get('content-type') || '';
+            res.status(response.status);
+            
+            response.headers.forEach((value, key) => {
+                if (!key.toLowerCase().startsWith('access-control-allow-')) {
+                    res.setHeader(key, value);
+                }
+            });
+
+            if (contentType.includes('application/json')) {
+                const data = await response.json();
+                res.json(data);
+            } else {
+                const text = await response.text();
+                res.send(text);
+            }
         }
-
     } catch (error) {
         console.error("Adapter Error:", error);
-        res.status(500).json({ error: error.message || "Internal Server Error" });
+        if (!res.headersSent) {
+            res.status(500).json({ error: error.message || "Internal Server Error" });
+        }
     }
 }
 
 // ============================================================
-// 🛣️ ROUTES (เชื่อมต่อ API ผ่าน Adapter)
+// 🛣️ ROUTES
 // ============================================================
 
-// 1. Login
-app.all('/api/admin-login', (req, res) => {
-    vercelAdapter(req, res, adminLoginHandler);
-});
+app.all('/api/AdminLogin', (req, res) => vercelAdapter(req, res, adminLoginHandler));
+app.all('/api/AdminList', (req, res) => vercelAdapter(req, res, adminListHandler));
+app.all('/api/cases/manage_case', (req, res) => vercelAdapter(req, res, manageCaseHandler));
+app.all('/api/cases/search_case', (req, res) => vercelAdapter(req, res, searchCaseHandler));
+app.all('/api/organization/manage_org', (req, res) => vercelAdapter(req, res, manageOrgHandler));
+app.all('/api/organization/search_org', (req, res) => vercelAdapter(req, res, searchOrgHandler));
+app.all('/api/flex_message/manage_flex_message', (req, res) => vercelAdapter(req, res, manageFlexHandler));
+app.all('/api/GetAuditLogs', (req, res) => vercelAdapter(req, res, getAuditLogsHandler));
 
-// 2. Admin List (ตัวที่มีปัญหา)
-app.all('/api/admin-list', (req, res) => {
-    vercelAdapter(req, res, adminListHandler);
-});
-
-// 3. Manage Case
-app.all('/api/manage-case', (req, res) => {
-    vercelAdapter(req, res, manageCaseHandler);
-});
-
-// 4. Search Case
-app.all('/api/search-case', (req, res) => {
-    vercelAdapter(req, res, searchCaseHandler);
-});
-
-// 5. Manage Flex Message
-app.all('/api/manage-flex-message', (req, res) => {
-    vercelAdapter(req, res, manageFlexMessageHandler);
-});
-
-// 6. Manage Org
-app.all('/api/manage-org', (req, res) => {
-    vercelAdapter(req, res, manageOrgHandler);
-});
-
-// 7. Search Org
-app.all('/api/search-org', (req, res) => {
-    vercelAdapter(req, res, searchOrgHandler);
-});
-
-// Route พื้นฐานเอาไว้เช็ค Server
 app.get('/', (req, res) => {
-  res.send('API Gateway is running (with Vercel Adapter)...');
+  res.send(`${pkg.name} v${pkg.version}`);
 });
 
-// เริ่มต้น Server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+});
+
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, closing server...');
+  server.close(() => {
+    console.log('Server closed.');
+    process.exit(0);
+  });
 });

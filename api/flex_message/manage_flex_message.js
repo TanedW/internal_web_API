@@ -1,34 +1,23 @@
 // api/flex_message/manage_flex_message.js
 
-export const config = {
-  runtime: 'edge',
-};
-
-import { neon } from '@neondatabase/serverless';
+import { query } from '../lib/db.js';
+import { writeAuditLog } from '../lib/logging.js';
 
 // ----------------------------------------------------------------------
-// Helper Function: บันทึก Log ลง Database
+// Helper Function: บันทึก Log
 // ----------------------------------------------------------------------
-async function saveAdminLog(sql, { adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
-  try {
-    await sql`
-      INSERT INTO admin_system_logs 
-      (admin_id, email, first_name, last_name, action_type, status, ip_address, user_agent, details)
-      VALUES (
-        ${adminId},       
-        ${email},         
-        ${first_name},    
-        ${last_name},     
-        ${action_type}, 
-        ${status}, 
-        ${ipAddress || null}::inet, 
-        ${userAgent || null}::text,
-        ${JSON.stringify(details)}
-      );
-    `;
-  } catch (e) {
-    console.error("Error saving admin log:", e);
-  }
+async function saveAdminLog({ adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
+  await writeAuditLog({
+    adminId,
+    email,
+    firstName: first_name,
+    lastName: last_name,
+    actionType: action_type,
+    status,
+    ipAddress,
+    userAgent,
+    details
+  }, status === 'SUCCESS' ? 'INFO' : 'WARNING');
 }
 
 const corsHeaders = {
@@ -37,39 +26,31 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-export default async function handler(req) {
+export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return res.status(200).end();
   }
 
-  const sql = neon(process.env.DATA_BASE_URL); // ตรวจสอบว่าตั้งค่าใน Vercel หรือ .env แล้ว
-  const { searchParams } = new URL(req.url);
-  
-  const forwarded = req.headers.get('x-forwarded-for');
-  const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
-  const userAgent = req.headers.get('user-agent') || null;
+  const { id: flex_id } = req.query;
+  const forwarded = req.headers['x-forwarded-for'];
+  const ipAddress = forwarded ? (typeof forwarded === 'string' ? forwarded.split(',')[0] : forwarded[0]) : null;
+  const userAgent = req.headers['user-agent'] || null;
 
   // ----------------------------------------------------------------------
-  // CASE: GET - ดึงรายการ Flex Message ทั้งหมด
+  // CASE: GET - ดึงจาก DB
   // ----------------------------------------------------------------------
   if (req.method === 'GET') {
     try {
-      const messages = await sql`
+      const { rows: messages } = await query(`
         SELECT id, flex_name, flex_data, comment, quick_reply, created_on, updated_on 
         FROM public.flex_message
         WHERE is_deleted = false 
         ORDER BY updated_on DESC;
-      `;
+      `);
       
-      return new Response(JSON.stringify({ success: true, data: messages }), { 
-        status: 200, 
-        headers: corsHeaders 
-      });
+      return res.status(200).json({ success: true, data: messages });
     } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), { 
-        status: 500, 
-        headers: corsHeaders 
-      });
+      return res.status(500).json({ error: error.message });
     }
   }
 
@@ -78,122 +59,128 @@ export default async function handler(req) {
   // ----------------------------------------------------------------------
   if (req.method === 'POST') {
     try {
-      const body = await req.json();
-      const { current_admin_id, flex_name, flex_data, comment, quick_reply } = body;
+      const { current_admin_id, flex_name, flex_data, comment, quick_reply } = req.body;
 
-      // ตรวจสอบ Admin ผู้กระทำการ
-      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
-      if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
+      // [UNIFIED] 1. ตรวจสอบ Admin
+      const { rows: actors } = await query('SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = $1', [current_admin_id]);
+      if (actors.length === 0) return res.status(403).json({ message: 'Unauthorized' });
       const actorAdmin = actors[0];
 
-      // บันทึกลงตาราง flex_message
-      const newFlex = await sql`
+      // [UNIFIED] 2. บันทึกลง DB
+      const { rows: newFlexData } = await query(`
         INSERT INTO public.flex_message (flex_name, flex_data, comment, quick_reply, created_on, updated_on)
-        VALUES (
-      ${flex_name}, 
-      ${typeof flex_data === 'object' ? JSON.stringify(flex_data) : flex_data}, 
-      ${comment || null}, 
-${quick_reply ? (typeof quick_reply === 'object' ? JSON.stringify(quick_reply) : quick_reply) : null},      NOW(), 
-      NOW()
-        )
+        VALUES ($1, $2, $3, $4, NOW(), NOW())
         RETURNING id, flex_name;
-      `;
+      `, [
+        flex_name, 
+        typeof flex_data === 'object' ? JSON.stringify(flex_data) : flex_data, 
+        comment || null, 
+        quick_reply ? (typeof quick_reply === 'object' ? JSON.stringify(quick_reply) : quick_reply) : null
+      ]);
 
-      // บันทึก Log การสร้าง
-      await saveAdminLog(sql, {
+      const newFlex = newFlexData[0];
+
+      await saveAdminLog({
         adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
         action_type: 'FLEX_MESSAGE_CREATE', status: 'SUCCESS', ipAddress, userAgent,
-        details: { target: 'flex_message', flex_id: newFlex[0].id, flex_name: newFlex[0].flex_name }
+        details: { target: 'flex_message', flex_id: newFlex.id, flex_name: newFlex.flex_name }
       });
 
-      return new Response(JSON.stringify({ success: true, data: newFlex[0] }), { status: 201, headers: corsHeaders });
+      return res.status(201).json({ success: true, data: newFlex });
     } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+      return res.status(500).json({ error: error.message });
     }
   }
 
   // ----------------------------------------------------------------------
-  // CASE: PUT - แก้ไขข้อมูลเดิม
+  // CASE: PUT - แก้ไขใน DB
   // ----------------------------------------------------------------------
   if (req.method === 'PUT') {
-    let flex_id = searchParams.get('id');
-    if (!flex_id) return new Response(JSON.stringify({ message: 'ID required' }), { status: 400, headers: corsHeaders });
+    if (!flex_id) return res.status(400).json({ message: 'ID required' });
 
     try {
-      const body = await req.json();
-      const { current_admin_id, flex_name, flex_data, comment, quick_reply, description, old_flex, new_flex } = body;
+      const { current_admin_id, flex_name, flex_data, comment, quick_reply, description, old_flex, new_flex } = req.body;
 
-      const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
-      if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
+      const { rows: actors } = await query('SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = $1', [current_admin_id]);
+      if (actors.length === 0) return res.status(403).json({ message: 'Unauthorized' });
       const actorAdmin = actors[0];
 
-      const updatedFlex = await sql`
+      const { rows: updatedFlexData } = await query(`
         UPDATE public.flex_message
         SET 
-            flex_name = COALESCE(${flex_name}, flex_name),
-            flex_data = COALESCE(${flex_data}, flex_data),
-            comment = COALESCE(${comment}, comment),
-            quick_reply = COALESCE(${quick_reply}, quick_reply),
+            flex_name = COALESCE($1, flex_name),
+            flex_data = COALESCE($2, flex_data),
+            comment = COALESCE($3, comment),
+            quick_reply = COALESCE($4, quick_reply),
             updated_on = NOW()
-        WHERE id = ${flex_id}
+        WHERE id = $5
         RETURNING id, flex_name;
-      `;
+      `, [
+        flex_name || null, 
+        flex_data ? (typeof flex_data === 'object' ? JSON.stringify(flex_data) : flex_data) : null,
+        comment || null,
+        quick_reply ? (typeof quick_reply === 'object' ? JSON.stringify(quick_reply) : quick_reply) : null,
+        flex_id
+      ]);
 
-      if (updatedFlex.length === 0) {
-        return new Response(JSON.stringify({ message: 'Data not found' }), { status: 404, headers: corsHeaders });
+      if (updatedFlexData.length === 0) {
+        return res.status(404).json({ message: 'Data not found' });
       }
 
-      await saveAdminLog(sql, {
+      const updatedFlex = updatedFlexData[0];
+
+      await saveAdminLog({
         adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
         action_type: 'FLEX_MESSAGE_UPDATE', status: 'SUCCESS', ipAddress, userAgent,
         details: { 
-          target: 'flex_message', flex_id: updatedFlex[0].id, flex_name: updatedFlex[0].flex_name,
+          target: 'flex_message', flex_id: updatedFlex.id, flex_name: updatedFlex.flex_name,
           old_flex, new_flex, description: description || "Updated template info"
         }
       });
 
-      return new Response(JSON.stringify({ success: true, data: updatedFlex[0] }), { status: 200, headers: corsHeaders });
+      return res.status(200).json({ success: true, data: updatedFlex });
     } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+      return res.status(500).json({ error: error.message });
     }
   }
-  // เพิ่ม Case ใหม่: DELETE
-if (req.method === 'DELETE') {
-  let flex_id = searchParams.get('id');
-  const body = await req.json();
-  const { current_admin_id } = body;
 
-  try {
-    // ตรวจสอบสิทธิ์ Admin
-    const actors = await sql`SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = ${current_admin_id}`;
-    if (actors.length === 0) return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 403, headers: corsHeaders });
-    const actorAdmin = actors[0];
+  // ----------------------------------------------------------------------
+  // CASE: DELETE - Soft Delete ใน DB
+  // ----------------------------------------------------------------------
+  if (req.method === 'DELETE') {
+    try {
+      const { current_admin_id } = req.body;
 
-    // ทำ Soft Delete โดยการ Update is_deleted = true
-    const deletedFlex = await sql`
-      UPDATE public.flex_message
-      SET 
-          is_deleted = true,
-          updated_on = NOW()
-      WHERE id = ${flex_id}
-      RETURNING id, flex_name;
-    `;
+      const { rows: actors } = await query('SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = $1', [current_admin_id]);
+      if (actors.length === 0) return res.status(403).json({ message: 'Unauthorized' });
+      const actorAdmin = actors[0];
 
-    if (deletedFlex.length === 0) {
-      return new Response(JSON.stringify({ message: 'Data not found' }), { status: 404, headers: corsHeaders });
+      const { rows: deletedFlexData } = await query(`
+        UPDATE public.flex_message
+        SET 
+            is_deleted = true,
+            updated_on = NOW()
+        WHERE id = $1
+        RETURNING id, flex_name;
+      `, [flex_id]);
+
+      if (deletedFlexData.length === 0) {
+        return res.status(404).json({ message: 'Data not found' });
+      }
+
+      const deletedFlex = deletedFlexData[0];
+
+      await saveAdminLog({
+        adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
+        action_type: 'FLEX_MESSAGE_DELETE', status: 'SUCCESS', ipAddress, userAgent,
+        details: { target: 'flex_message', flex_id: deletedFlex.id, flex_name: deletedFlex.flex_name, note: "Soft deleted" }
+      });
+
+      return res.status(200).json({ success: true, message: "Deleted successfully" });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
     }
-
-    // บันทึก Log
-    await saveAdminLog(sql, {
-      adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
-      action_type: 'FLEX_MESSAGE_DELETE', status: 'SUCCESS', ipAddress, userAgent,
-      details: { target: 'flex_message', flex_id: deletedFlex[0].id, flex_name: deletedFlex[0].flex_name, note: "Soft deleted" }
-    });
-
-    return new Response(JSON.stringify({ success: true, message: "Deleted successfully" }), { status: 200, headers: corsHeaders });
-  } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
   }
-}
-  return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
+
+  return res.status(405).json({ message: 'Method not allowed' });
 }

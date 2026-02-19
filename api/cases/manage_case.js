@@ -1,118 +1,86 @@
 // api/manage_case.js
 
-export const config = {
-  runtime: 'edge',
-};
-
-import { neon } from '@neondatabase/serverless';
+import { query } from '../lib/db.js';
+import { writeAuditLog } from '../lib/logging.js';
 
 // ----------------------------------------------------------------------
-// Helper Function: บันทึก Log ลง Database
+// Helper Function: บันทึก Log
 // ----------------------------------------------------------------------
-async function saveAdminLog(sql, { adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
-  try {
-    await sql`
-      INSERT INTO admin_system_logs 
-      (admin_id, email, first_name, last_name, action_type, status, ip_address, user_agent, details)
-      VALUES (
-        ${adminId},       
-        ${email},         
-        ${first_name},    
-        ${last_name},     
-        ${action_type}, 
-        ${status}, 
-        ${ipAddress || null}::inet, 
-        ${userAgent || null}::text,
-        ${details}
-      );
-    `;
-  } catch (e) {
-    console.error("Error saving admin log:", e);
-  }
+async function saveAdminLog({ adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
+  await writeAuditLog({
+    adminId,
+    email,
+    firstName: first_name,
+    lastName: last_name,
+    actionType: action_type,
+    status,
+    ipAddress,
+    userAgent,
+    details
+  }, status === 'SUCCESS' ? 'INFO' : 'WARNING');
 }
 
-// ----------------------------------------------------------------------
-// Main Handler
-// ----------------------------------------------------------------------
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-export default async function handler(req) {
+export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return res.status(200).end();
   }
 
-  if (req.method !== 'PUT') {
-    return new Response(JSON.stringify({ message: 'Method not allowed' }), { status: 405, headers: corsHeaders });
-  }
+  const { id: case_id_raw } = req.query;
+  let case_id = case_id_raw ? case_id_raw.replace(/[^a-zA-Z0-9-]/g, '') : null;
 
-  const sql = neon(process.env.DATA_BASE_URL);
-  
-  const { searchParams } = new URL(req.url);
-  let case_id = searchParams.get('id'); 
-
-  const forwarded = req.headers.get('x-forwarded-for');
-  const ipAddress = forwarded ? forwarded.split(',')[0].trim() : null;
-  const userAgent = req.headers.get('user-agent') || null;
-
-  if (case_id) {
-    case_id = case_id.replace(/[^a-zA-Z0-9-]/g, '');
-  }
+  const forwarded = req.headers['x-forwarded-for'];
+  const ipAddress = forwarded ? (typeof forwarded === 'string' ? forwarded.split(',')[0] : forwarded[0]) : null;
+  const userAgent = req.headers['user-agent'] || null;
 
   if (!case_id) {
-    return new Response(JSON.stringify({ message: 'Case ID is required' }), { status: 400, headers: corsHeaders });
+    return res.status(400).json({ message: 'Case ID is required' });
   }
 
   try {
-    let body = {};
-    try {
-      body = await req.json();
-    } catch (e) {
-      return new Response(JSON.stringify({ message: 'Invalid JSON body' }), { status: 400, headers: corsHeaders });
-    }
-
-    const { current_admin_id, photo_id, file_url, description, viewed, old_url } = body;
+    const { current_admin_id, photo_id, file_url, description, viewed, old_url } = req.body;
     
     if (!current_admin_id || !photo_id || !file_url) {
-         return new Response(JSON.stringify({ message: 'Missing required fields' }), { status: 400, headers: corsHeaders });
+         return res.status(400).json({ message: 'Missing required fields' });
     }
 
     const cleanPhotoId = photo_id.toString().replace(/[^a-zA-Z0-9-]/g, '');
 
-    // 1. ตรวจสอบ Admin
-    const actors = await sql`
+    // [UNIFIED] 1. ตรวจสอบ Admin จาก DB
+    const { rows: actors } = await query(`
         SELECT admin_id, email, first_name, last_name 
         FROM admin_system 
-        WHERE admin_id = ${current_admin_id}
-    `;
+        WHERE admin_id = $1
+    `, [current_admin_id]);
 
     if (actors.length === 0) {
-        return new Response(JSON.stringify({ message: 'Unauthorized: Admin not found' }), { status: 403, headers: corsHeaders });
+        return res.status(403).json({ message: 'Unauthorized: Admin not found' });
     }
     const actorAdmin = actors[0];
 
-    // 2. Update Logic (เอา description ออกจากตรงนี้ เพื่อไม่ให้ Error)
-    const updatedMedia = await sql`
+    // [UNIFIED] 2. Update ข้อมูลใน DB
+    const { rows: updatedMedia } = await query(`
         UPDATE voice_attachment
         SET 
-            photo = ${file_url},
-            viewed = ${viewed}, 
+            photo = $1,
+            viewed = $2, 
             updated_on = NOW()
-            -- ลบบรรทัด description = ... ทิ้งไปเลย เพราะตารางนี้ไม่มี column นี้
-        WHERE id = ${cleanPhotoId}  
+        WHERE id = $3  
         AND id IN (
             SELECT attachment_id 
             FROM voice_message_photos 
-            WHERE message_id = ${case_id}
+            WHERE message_id = $4
         )
         RETURNING id, photo, updated_on;
-    `;
+    `, [file_url, viewed, cleanPhotoId, case_id]);
 
     if (updatedMedia.length === 0) {
-        await saveAdminLog(sql, {
+        await saveAdminLog({
             adminId: actorAdmin.admin_id,
             email: actorAdmin.email,
             first_name: actorAdmin.first_name,
@@ -128,13 +96,13 @@ export default async function handler(req) {
             }
         });
 
-        return new Response(JSON.stringify({ 
+        return res.status(404).json({ 
             message: 'Update failed. Photo ID not found or mismatch.' 
-        }), { status: 404, headers: corsHeaders });
+        });
     }
 
-    // 3. Save Success Log (บันทึก description ลงใน JSON details ของตาราง Log แทน)
-    await saveAdminLog(sql, {
+    // 3. Save Success Log
+    await saveAdminLog({
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
         first_name: actorAdmin.first_name,
@@ -149,18 +117,18 @@ export default async function handler(req) {
             attachment_id: cleanPhotoId,
             new_url: file_url,
             new_type_code: viewed,
-            old_url: old_url || null, // <--- เพิ่มบรรทัดนี้เพื่อเก็บ URL เก่า
-            description: description || "No reason provided" // <--- อยู่ตรงนี้ครับ ถูกต้องตาม requirement
+            old_url: old_url || null,
+            description: description || "No reason provided"
         }
     });
 
-    return new Response(JSON.stringify({ 
+    return res.status(200).json({ 
         success: true, 
         data: updatedMedia[0]
-    }), { status: 200, headers: corsHeaders });
+    });
 
   } catch (error) {
     console.error("API Error:", error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+    return res.status(500).json({ error: error.message });
   }
 }
