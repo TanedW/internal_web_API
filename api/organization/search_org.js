@@ -51,19 +51,22 @@ export default async function handler(req, res) {
             jsonb_agg(DISTINCT
               jsonb_build_object(
                 'member', m.id,
+                'picture_profile', u.document_url,
                 'member_name', m.name,
                 'member_phone', m.phone,
+                'email', u.email,
                 'role', m.role,
                 'user_id', m.user_id,
                 'created_on', m.created_on 
               )
-            ) FILTER (WHERE c.id IS NOT NULL), '[]'
+            ) FILTER (WHERE m.id IS NOT NULL), '[]'
           ) AS members
         FROM voice_fonduegroup g
         LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
         -- JOIN กับตารางที่เก็บข้อมูลตามรูปภาพที่คุณแนบมา
         LEFT JOIN voice_qrcodefonduegroup q ON g.id = q.group_id AND q.type_qr = 'report-org'
         LEFT JOIN voice_fonduegroupmember m ON g.id = m.group_id
+        LEFT JOIN traffy_user u ON m.user_id = u.id
 
         WHERE 
           ${isNumeric ? 'g.id = $1' : 'g.name ILIKE $1'}
