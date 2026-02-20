@@ -95,8 +95,8 @@ app.all('/api/organization/search_org', (req, res) => vercelAdapter(req, res, se
 app.all('/api/flex_message/manage_flex_message', (req, res) => vercelAdapter(req, res, manageFlexHandler));
 app.all('/api/GetAuditLogs', (req, res) => vercelAdapter(req, res, getAuditLogsHandler));
 app.all('/api/richmenu', (req, res) => vercelAdapter(req, res, richmenuHandler));
-app.post('/api/CheckSession', checkSessionHandler);
-app.get('/api/GetUserRoles', getUserRolesHandler);
+app.all('/api/CheckSession', (req, res) => vercelAdapter(req, res, checkSessionHandler));
+app.all('/api/GetUserRoles', (req, res) => vercelAdapter(req, res, getUserRolesHandler));
 
 app.get('/', (req, res) => {
   res.send(`${pkg.name} v${pkg.version}`);
