@@ -10,8 +10,17 @@
     }
   ],
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/index.js" },
-    { "source": "/internal_web_api/(.*)", "destination": "/index.js" },
-    { "source": "/", "destination": "/index.js" }
+    { 
+      "source": "/server-api/(.*)", 
+      "destination": "/index.js" 
+    },
+    { 
+      "source": "/api/(.*)", 
+      "destination": "/index.js" 
+    },
+    { 
+      "source": "/internal_web_api/(.*)", 
+      "destination": "/index.js" 
+    }
   ]
 }
