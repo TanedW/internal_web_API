@@ -1,8 +1,3 @@
-// ยังไม่ใช่ API ตัวจริงงง
-// เทสสสส
-//
-//
-//
 import pg from 'pg';
 
 const { Pool } = pg;
