@@ -40,9 +40,6 @@
     { "source": "/internal_web_api/doc/(.*)", "destination": "/api/doc.js" },
     { "source": "/internal_web_api/(.*)", "destination": "/api/$1" },
     { "source": "/internal_web_api/(.*)", "destination": "/server-api/$1" },
-    {
-      "source": "/server-api/(.*)",
-      "destination": "/server-api/$1.js"
-    }
+    {"source": "/(.*)", "destination": "/index.js"}
   ]
 }
