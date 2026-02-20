@@ -36,19 +36,35 @@ export default async function handler(req, res) {
             ELSE 'deleted' 
           END AS status,
           g.deleted_at,
+          -- ดึง uuid_qr จากตาราง QR (ระบุชื่อตารางจริงของคุณแทน your_qr_table)
           q.uuid_qr,
           COALESCE(
-            json_agg(
-              json_build_object(
+            json_agg(DISTINCT
+              jsonb_build_object(
                 'id', c.id,
                 'code', c.code,
                 'code_staff', c.code_staff
               )
             ) FILTER (WHERE c.id IS NOT NULL), '[]'
-          ) AS admin_codes
+          ) AS admin_codes,
+          COALESCE(
+            jsonb_agg(DISTINCT
+              jsonb_build_object(
+                'member', m.id,
+                'member_name', m.name,
+                'member_phone', m.phone,
+                'role', m.role,
+                'user_id', m.user_id,
+                'created_on', m.created_on 
+              )
+            ) FILTER (WHERE c.id IS NOT NULL), '[]'
+          ) AS members
         FROM voice_fonduegroup g
         LEFT JOIN voice_codeclaimadmingroup c ON g.id = c.group_id
+        -- JOIN กับตารางที่เก็บข้อมูลตามรูปภาพที่คุณแนบมา
         LEFT JOIN voice_qrcodefonduegroup q ON g.id = q.group_id AND q.type_qr = 'report-org'
+        LEFT JOIN voice_fonduegroupmember m ON g.id = m.group_id
+
         WHERE 
           ${isNumeric ? 'g.id = $1' : 'g.name ILIKE $1'}
         GROUP BY g.id, q.uuid_qr;

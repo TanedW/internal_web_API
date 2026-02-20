@@ -13,7 +13,7 @@ import manageOrgHandler from './api/organization/manage_org.js';
 import searchOrgHandler from './api/organization/search_org.js';
 import manageFlexHandler from './api/flex_message/manage_flex_message.js';
 import getAuditLogsHandler from './api/GetAuditLogs.js';
-import richmenuHandler from './api/richmenu/richmenu.js'
+import richmenuHandler from './api/richmmenu/richmenu.js'
 
 const app = express();
 const PORT = process.env.PORT || 8080;
