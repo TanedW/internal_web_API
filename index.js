@@ -14,8 +14,8 @@ import searchOrgHandler from './api/organization/search_org.js';
 import manageFlexHandler from './api/flex_message/manage_flex_message.js';
 import getAuditLogsHandler from './api/GetAuditLogs.js';
 import richmenuHandler from './api/richmmenu/richmenu.js'
-import checkSessionHandler from './api/CheckSession.js';
-import getUserRolesHandler from './api/GetUserRoles.js';
+import checkSessionHandler from './server-api/CheckSession.js';
+import getUserRolesHandler from './server-api/GetUserRoles.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -95,8 +95,8 @@ app.all('/api/organization/search_org', (req, res) => vercelAdapter(req, res, se
 app.all('/api/flex_message/manage_flex_message', (req, res) => vercelAdapter(req, res, manageFlexHandler));
 app.all('/api/GetAuditLogs', (req, res) => vercelAdapter(req, res, getAuditLogsHandler));
 app.all('/api/richmenu', (req, res) => vercelAdapter(req, res, richmenuHandler));
-app.all('/api/CheckSession', (req, res) => vercelAdapter(req, res, checkSessionHandler));
-app.all('/api/GetUserRoles', (req, res) => vercelAdapter(req, res, getUserRolesHandler));
+app.all('/server-api/CheckSession', (req, res) => vercelAdapter(req, res, checkSessionHandler));
+app.all('/server-api/GetUserRoles', (req, res) => vercelAdapter(req, res, getUserRolesHandler));
 
 app.get('/', (req, res) => {
   res.send(`${pkg.name} v${pkg.version}`);
