@@ -36,7 +36,8 @@
     }
   ],
   "rewrites": [
-    
-    {"source": "/(.*)", "destination": "/index.js"}
+    { "source": "/internal_web_api/doc", "destination": "/api/doc.js" },
+    { "source": "/internal_web_api/doc/(.*)", "destination": "/api/doc.js" },
+    { "source": "/internal_web_api/(.*)", "destination": "/api/$1" }
   ]
 }
