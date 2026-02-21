@@ -1,9 +1,4 @@
 {
-  "functions": {
-    "index.js": {
-      "runtime": "nodejs20.x"
-    }
-  },
   "headers": [
     {
       "source": "/(api|server-api)/(.*)",
@@ -15,8 +10,8 @@
     }
   ],
   "rewrites": [
-    { "source": "/internal_web_api/(.*)", "destination": "/index.js" },
-    { "source": "/api/(.*)", "destination": "/index.js" },
-    { "source": "/server-api/(.*)", "destination": "/index.js" }
+    { "source": "/internal_web_api/(.*)", "destination": "/api/index.js" },
+    { "source": "/api/(.*)", "destination": "/api/index.js" },
+    { "source": "/server-api/(.*)", "destination": "/api/index.js" }
   ]
 }
