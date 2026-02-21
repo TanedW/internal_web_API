@@ -14,8 +14,8 @@ import searchOrgHandler from './api/organization/search_org.js';
 import manageFlexHandler from './api/flex_message/manage_flex_message.js';
 import getAuditLogsHandler from './api/GetAuditLogs.js';
 import richmenuHandler from './api/richmmenu/richmenu.js'
-import checkSessionHandler from './server-api/CheckSession.js';
-import getUserRolesHandler from './server-api/GetUserRoles.js';
+import checkSessionHandler from './api/CheckSession.js';
+import getUserRolesHandler from './api/GetUserRoles.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;

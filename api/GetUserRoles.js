@@ -1,6 +1,6 @@
 // api/GetUserRoles.js
 import { Permit } from "permitio";
-import * as db from '../api/lib/db.js';
+import * as db from './lib/db.js';
 
 // Initialize Permit (ดึง PDP และ Token เหมือน AdminList.js)
 const permit = new Permit({

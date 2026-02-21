@@ -1,45 +1,28 @@
 {
   "headers": [
     {
-      "source": "/api/(.*)",
+      "source": "/(api|server-api)/(.*)",
       "headers": [
-        {
-          "key": "Access-Control-Allow-Origin",
-          "value": "*" 
-        },
-        {
-          "key": "Access-Control-Allow-Methods",
-          "value": "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-        },
-        {
-          "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, Authorization, X-Requested-With"
-        }
-      ]
-    },
-    {
-      "source": "/server-api/(.*)",
-      "headers": [
-        {
-          "key": "Access-Control-Allow-Origin",
-          "value": "*" 
-        },
-        {
-          "key": "Access-Control-Allow-Methods",
-          "value": "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-        },
-        {
-          "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, Authorization, X-Requested-With"
-        }
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, PATCH, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization, X-Requested-With" }
       ]
     }
   ],
   "rewrites": [
     { "source": "/internal_web_api/doc", "destination": "/api/doc.js" },
     { "source": "/internal_web_api/doc/(.*)", "destination": "/api/doc.js" },
+    
+  
     { "source": "/internal_web_api/(.*)", "destination": "/api/$1" },
-    { "source": "/server-api/(.*)", "destination": "/server-api/$1" }
 
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/server-api/(.*)",
+      "destination": "/api/index.js"
+    }
   ]
 }
