@@ -10,19 +10,8 @@
     }
   ],
   "rewrites": [
-    { "source": "/internal_web_api/doc", "destination": "/api/doc.js" },
-    { "source": "/internal_web_api/doc/(.*)", "destination": "/api/doc.js" },
-    
-  
-    { "source": "/internal_web_api/(.*)", "destination": "/api/$1" },
-
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/index.js"
-    },
-    {
-      "source": "/server-api/(.*)",
-      "destination": "/api/index.js"
-    }
+    { "source": "/internal_web_api/(.*)", "destination": "/api/index.js" },
+    { "source": "/api/(.*)", "destination": "/api/index.js" },
+    { "source": "/server-api/(.*)", "destination": "/api/index.js" }
   ]
 }

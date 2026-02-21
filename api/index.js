@@ -5,17 +5,17 @@ import fs from 'fs';
 
 const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
 
-import adminLoginHandler from './api/AdminLogin.js';
-import adminListHandler from './api/AdminList.js';
-import manageCaseHandler from './api/cases/manage_case.js'; 
-import searchCaseHandler from './api/cases/search_case.js';
-import manageOrgHandler from './api/organization/manage_org.js';
-import searchOrgHandler from './api/organization/search_org.js';
-import manageFlexHandler from './api/flex_message/manage_flex_message.js';
-import getAuditLogsHandler from './api/GetAuditLogs.js';
-import richmenuHandler from './api/richmmenu/richmenu.js'
-import checkSessionHandler from './api/CheckSession.js';
-import getUserRolesHandler from './api/GetUserRoles.js';
+import adminLoginHandler from '../src/AdminLogin.js';
+import adminListHandler from '../src/AdminList.js';
+import manageCaseHandler from '../src/cases/manage_case.js'; 
+import searchCaseHandler from '../src/cases/search_case.js';
+import manageOrgHandler from '../src/organization/manage_org.js';
+import searchOrgHandler from '../src/organization/search_org.js';
+import manageFlexHandler from '../src/flex_message/manage_flex_message.js';
+import getAuditLogsHandler from '../src/GetAuditLogs.js';
+import richmenuHandler from '../src/richmmenu/richmenu.js'
+import checkSessionHandler from '../src/CheckSession.js';
+import getUserRolesHandler from '../src/GetUserRoles.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -31,6 +31,13 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
+
+app.use((req, res, next) => {
+    if (req.url.startsWith('/internal_web_api/')) {
+        req.url = req.url.replace('/internal_web_api/', '/api/');
+    }
+    next();
+});
 
 // ============================================================
 // 🔧 ADAPTER FUNCTION
