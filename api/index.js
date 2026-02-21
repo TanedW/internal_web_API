@@ -1,9 +1,7 @@
 import 'dotenv/config';   
 import express from 'express';
 import cors from 'cors';
-import fs from 'fs';
-
-const pkg = JSON.parse(fs.readFileSync('../package.json', 'utf8'));
+import pkg from '../package.json' assert { type: 'json' };
 
 import adminLoginHandler from '../src/AdminLogin.js';
 import adminListHandler from '../src/AdminList.js';
