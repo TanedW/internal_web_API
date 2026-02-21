@@ -5,17 +5,17 @@ import fs from 'fs';
 
 const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
 
-import adminLoginHandler from '../src/AdminLogin.js';
-import adminListHandler from '../src/AdminList.js';
-import manageCaseHandler from '../src/cases/manage_case.js'; 
-import searchCaseHandler from '../src/cases/search_case.js';
-import manageOrgHandler from '../src/organization/manage_org.js';
-import searchOrgHandler from '../src/organization/search_org.js';
-import manageFlexHandler from '../src/flex_message/manage_flex_message.js';
-import getAuditLogsHandler from '../src/GetAuditLogs.js';
-import richmenuHandler from '../src/richmmenu/richmenu.js'
-import checkSessionHandler from '../src/CheckSession.js';
-import getUserRolesHandler from '../src/GetUserRoles.js';
+import adminLoginHandler from './src/AdminLogin.js';
+import adminListHandler from './src/AdminList.js';
+import manageCaseHandler from './src/cases/manage_case.js'; 
+import searchCaseHandler from './src/cases/search_case.js';
+import manageOrgHandler from './src/organization/manage_org.js';
+import searchOrgHandler from './src/organization/search_org.js';
+import manageFlexHandler from './src/flex_message/manage_flex_message.js';
+import getAuditLogsHandler from './src/GetAuditLogs.js';
+import richmenuHandler from './src/richmmenu/richmenu.js'
+import checkSessionHandler from './src/CheckSession.js';
+import getUserRolesHandler from './src/GetUserRoles.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -32,6 +32,7 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
 
+// Normalizing /internal_web_api/ for local testing if needed
 app.use((req, res, next) => {
     if (req.url.startsWith('/internal_web_api/')) {
         req.url = req.url.replace('/internal_web_api/', '/api/');
@@ -53,6 +54,7 @@ async function vercelAdapter(req, res, handler) {
                 get: (key) => req.headers[key.toLowerCase()],
                 ...req.headers
             },
+            socket: req.socket,
             query: req.query,
             body: req.body,
             json: async () => req.body,
