@@ -16,7 +16,7 @@
   ],
   "functions": {
     "api/index.js": {
-      "includeFiles": "node_modules/iconv-lite/lib/*.js"
+      "includeFiles": "node_modules/**/iconv-lite/lib/**/*.js"
     }
   }
 }
