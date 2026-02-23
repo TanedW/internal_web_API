@@ -4,7 +4,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
+    "start": "node api/index.js",
     "dev": "nodemon index.js"
   },
   "keywords": [],
@@ -21,6 +21,7 @@
     "express": "^4.19.2",
     "jose": "^6.1.0",
     "nodemon": "^3.1.11",
+    "path-to-regexp": "^8.3.0",
     "permitio": "^2.7.5",
     "pg": "^8.16.3",
     "swagger-jsdoc": "^6.2.8",
