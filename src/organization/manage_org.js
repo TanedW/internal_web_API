@@ -155,9 +155,10 @@ export default async function handler(req, res) {
         SET 
           name = COALESCE($1, name),
           photo = COALESCE($2, photo),
-          official_group = CASE WHEN $3 IS NULL THEN official_group ELSE $3 END,
-          download_csv = CASE WHEN $4 IS NULL THEN download_csv ELSE $4 END,
-          deleted_at = CASE WHEN $5 = true THEN NULL ELSE deleted_at END,
+          -- เพิ่ม ::boolean เพื่อระบุประเภทข้อมูลที่แน่นอน
+          official_group = CASE WHEN ($3::boolean) IS NULL THEN official_group ELSE $3::boolean END,
+          download_csv = CASE WHEN ($4::boolean) IS NULL THEN download_csv ELSE $4::boolean END,
+          deleted_at = CASE WHEN $5::boolean = true THEN NULL ELSE deleted_at END,
           updated_on = NOW()
         WHERE id = $6
         RETURNING id, name, photo, official_group, download_csv, deleted_at, updated_on;
