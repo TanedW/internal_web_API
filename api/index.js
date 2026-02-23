@@ -31,6 +31,7 @@ import getAuditLogsHandler from '../src/GetAuditLogs.js';
 import richmenuHandler from '../src/richmmenu/richmenu.js'
 import checkSessionHandler from '../src/CheckSession.js';
 import getUserRolesHandler from '../src/GetUserRoles.js';
+import validatePushHandler from '../src/flex_message/validate-push.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -121,6 +122,7 @@ app.all('/api/GetAuditLogs', (req, res) => vercelAdapter(req, res, getAuditLogsH
 app.all('/api/richmenu', (req, res) => vercelAdapter(req, res, richmenuHandler));
 app.all('/server-api/CheckSession', (req, res) => vercelAdapter(req, res, checkSessionHandler));
 app.all('/server-api/GetUserRoles', (req, res) => vercelAdapter(req, res, getUserRolesHandler));
+app.all('/api/flex_message/validate-push', (req, res) => vercelAdapter(req, res, validatePushHandler));
 
 app.get('/', (req, res) => {
   res.send(`${pkg.name} v${pkg.version}`);
