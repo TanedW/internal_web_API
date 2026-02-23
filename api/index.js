@@ -4,6 +4,16 @@ import cors from 'cors';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+// Force Vercel to bundle iconv-lite internal files
+try {
+    require('iconv-lite/lib/extend-node');
+    require('iconv-lite/lib/streams');
+} catch (e) {
+    // Ignore error if files are missing during local dev
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
