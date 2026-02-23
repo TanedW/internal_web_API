@@ -16,7 +16,7 @@
   ],
   "functions": {
     "api/index.js": {
-      "includeFiles": "node_modules/iconv-lite/**"
+      "includeFiles": "node_modules/{iconv-lite,pg,pg-protocol}/**"
     }
   }
 }
