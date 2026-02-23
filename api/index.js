@@ -51,7 +51,7 @@ app.use(cors({
 // Normalizing /internal_web_api/ for local testing if needed
 app.use((req, res, next) => {
     if (req.url.startsWith('/internal_web_api/')) {
-        req.url = req.url.replace('/internal_web_api/', '/api/');
+        req.url = req.url.replace('/internal_web_api/', '/src/');
     }
     next();
 });
