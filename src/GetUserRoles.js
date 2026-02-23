@@ -1,16 +1,16 @@
 // api/GetUserRoles.js
 import { Permit } from "permitio";
 import * as db from './lib/db.js';
+import { parse } from 'cookie'; // ใช้ library ในการ parse เพื่อความแม่นยำ
 
-// Initialize Permit (ดึง PDP และ Token เหมือน AdminList.js)
+// Initialize Permit
 const permit = new Permit({
   pdp: "https://cloudpdp.api.permit.io",
   token: process.env.PERMIT_API_KEY,
 });
 
 export default async function handler(req, res) {
-  // 1. CORS Setup (รองรับ Credentials สำหรับดึง Cookie)
-  console.log("Cookie Received:", req.headers.cookie); // เพิ่มบรรทัดนี้
+  // --- 1. CORS & Headers Setup ---
   const origin = req.headers.origin;
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -23,24 +23,23 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  if (req.method !== 'GET') {
-    return res.status(405).json({ message: 'Method Not Allowed' });
-  }
+  console.log("--- New Request Received ---");
 
   try {
-    // 2. ดึง Token จาก Cookie (req.cookies)
-    // หมายเหตุ: หากใช้ใน Node.js/Vercel ปกติ อาจต้องติดตั้ง 'cookie' parser หรือดึงจาก req.headers.cookie
-    const cookies = req.headers.cookie;
-    const tokenFromCookie = cookies
-      ?.split('; ')
-      .find(row => row.startsWith('access_token='))
-      ?.split('=')[1];
+    // --- 2. Extract Token from Cookie ---
+    const rawCookies = req.headers.cookie || '';
+    console.log("Debug [1] Raw Cookie Header:", rawCookies);
+
+    const cookies = parse(rawCookies);
+    const tokenFromCookie = cookies.access_token; // เปลี่ยนชื่อตามที่เก็บใน Browser จริง
 
     if (!tokenFromCookie) {
-      return res.status(401).json({ roles: ['guest'], isValid: false });
+      console.warn("Debug [2] No 'access_token' found in cookies.");
+      return res.status(401).json({ roles: ['guest'], isValid: false, message: 'No token provided' });
     }
+    console.log("Debug [2] Extracted Token:", tokenFromCookie.substring(0, 10) + "...");
 
-    // 3. ตรวจสอบ Session กับ Database
+    // --- 3. ตรวจสอบ Session กับ Database ---
     const { rows: userInDb } = await db.query(
       `SELECT admin_id, email 
        FROM admin_system 
@@ -49,30 +48,37 @@ export default async function handler(req, res) {
       [tokenFromCookie]
     );
 
-    if (userInDb.length === 0) {
+    if (!userInDb || userInDb.length === 0) {
+      console.warn("Debug [3] Token not found in DB or User is deleted.");
       return res.status(401).json({ roles: ['guest'], isValid: false, message: 'Invalid session' });
     }
 
     const userData = userInDb[0];
+    console.log("Debug [3] User Found in DB:", userData.email);
 
-    // 4. ดึง Roles จาก Permit.io (ใช้ SDK แทน Fetch API เพื่อความง่าย)
+    // --- 4. ดึง Roles จาก Permit.io ---
     let userRoles = ['guest'];
     try {
+      console.log(`Debug [4] Fetching roles for User ID: ${userData.admin_id}`);
+      
       const assignedRoles = await permit.api.users.getAssignedRoles({
         user: String(userData.admin_id),
         tenant: "default"
       });
 
-      if (assignedRoles.length > 0) {
-        // ดึงเฉพาะชื่อ role ออกมา
+      if (assignedRoles && assignedRoles.length > 0) {
         userRoles = assignedRoles.map(r => r.role);
+        console.log("Debug [4] Roles Found in Permit:", userRoles);
+      } else {
+        console.log("Debug [4] No roles assigned in Permit, defaulting to guest.");
       }
     } catch (permitError) {
-      console.error(`Permit Fetch Error for ${userData.admin_id}:`, permitError);
-      // หากเกิด error กับ Permit ยังคงให้คืนค่า guest ไปก่อน
+      console.error("Debug [4] Permit API Error:", permitError.message);
+      // หาก Permit มีปัญหา ยังให้ isValid: true ตาม DB แต่ Role เป็น guest
     }
 
-    // 5. ส่งผลลัพธ์กลับ
+    // --- 5. Return Success ---
+    console.log("Debug [5] Final Response Sent: Success");
     return res.status(200).json({
       roles: userRoles,
       isValid: true,
@@ -80,11 +86,11 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error("API Critical Error in GetUserRoles:", error);
+    console.error("Debug [CRITICAL ERROR]:", error);
     return res.status(500).json({
       roles: ['guest'],
       isValid: false,
-      error: 'An internal server error occurred.'
+      error: 'Internal server error'
     });
   }
 }
