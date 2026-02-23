@@ -10,6 +10,7 @@ const permit = new Permit({
 
 export default async function handler(req, res) {
   // 1. CORS Setup (รองรับ Credentials สำหรับดึง Cookie)
+  console.log("Cookie Received:", req.headers.cookie); // เพิ่มบรรทัดนี้
   const origin = req.headers.origin;
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
