@@ -7,10 +7,11 @@ import { dirname, join } from 'path';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-// Force Vercel to bundle iconv-lite internal files
+// Force Vercel to bundle iconv-lite and pg-protocol internal files
 try {
     require('iconv-lite/lib/extend-node');
     require('iconv-lite/lib/streams');
+    require('pg-protocol');
 } catch (e) {
     // Ignore error if files are missing during local dev
 }
