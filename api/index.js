@@ -111,18 +111,18 @@ async function vercelAdapter(req, res, handler) {
 // 🛣️ ROUTES
 // ============================================================
 
-app.all('/api/AdminLogin', (req, res) => vercelAdapter(req, res, adminLoginHandler));
-app.all('/api/AdminList', (req, res) => vercelAdapter(req, res, adminListHandler));
-app.all('/api/cases/manage_case', (req, res) => vercelAdapter(req, res, manageCaseHandler));
-app.all('/api/cases/search_case', (req, res) => vercelAdapter(req, res, searchCaseHandler));
-app.all('/api/organization/manage_org', (req, res) => vercelAdapter(req, res, manageOrgHandler));
-app.all('/api/organization/search_org', (req, res) => vercelAdapter(req, res, searchOrgHandler));
-app.all('/api/flex_message/manage_flex_message', (req, res) => vercelAdapter(req, res, manageFlexHandler));
-app.all('/api/GetAuditLogs', (req, res) => vercelAdapter(req, res, getAuditLogsHandler));
-app.all('/api/richmenu', (req, res) => vercelAdapter(req, res, richmenuHandler));
-app.all('/server-api/CheckSession', (req, res) => vercelAdapter(req, res, checkSessionHandler));
-app.all('/server-api/GetUserRoles', (req, res) => vercelAdapter(req, res, getUserRolesHandler));
-app.all('/api/flex_message/validate-push', (req, res) => vercelAdapter(req, res, validatePushHandler));
+app.all('/src/AdminLogin', (req, res) => vercelAdapter(req, res, adminLoginHandler));
+app.all('/src/AdminList', (req, res) => vercelAdapter(req, res, adminListHandler));
+app.all('/src/cases/manage_case', (req, res) => vercelAdapter(req, res, manageCaseHandler));
+app.all('/src/cases/search_case', (req, res) => vercelAdapter(req, res, searchCaseHandler));
+app.all('/src/organization/manage_org', (req, res) => vercelAdapter(req, res, manageOrgHandler));
+app.all('/src/organization/search_org', (req, res) => vercelAdapter(req, res, searchOrgHandler));
+app.all('/src/flex_message/manage_flex_message', (req, res) => vercelAdapter(req, res, manageFlexHandler));
+app.all('/src/GetAuditLogs', (req, res) => vercelAdapter(req, res, getAuditLogsHandler));
+app.all('/src/richmenu', (req, res) => vercelAdapter(req, res, richmenuHandler));
+app.all('/src/CheckSession', (req, res) => vercelAdapter(req, res, checkSessionHandler));
+app.all('/src/GetUserRoles', (req, res) => vercelAdapter(req, res, getUserRolesHandler));
+app.all('/src/flex_message/validate-push', (req, res) => vercelAdapter(req, res, validatePushHandler));
 
 app.get('/', (req, res) => {
   res.send(`${pkg.name} v${pkg.version}`);
