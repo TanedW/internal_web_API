@@ -28,7 +28,8 @@ import manageOrgHandler from '../src/organization/manage_org.js';
 import searchOrgHandler from '../src/organization/search_org.js';
 import manageFlexHandler from '../src/flex_message/manage_flex_message.js';
 import getAuditLogsHandler from '../src/GetAuditLogs.js';
-import richmenuHandler from '../src/richmmenu/richmenu.js'
+import richmenuHandler from '../src/richmmenu/richmenu_home.js'
+import richmenuDashboardHandler from '../src/richmmenu/richmenu_dashboard.js'
 import checkSessionHandler from '../src/CheckSession.js';
 import getUserRolesHandler from '../src/GetUserRoles.js';
 import validatePushHandler from '../src/flex_message/validate-push.js';
@@ -119,7 +120,8 @@ app.all('/src/organization/manage_org', (req, res) => vercelAdapter(req, res, ma
 app.all('/src/organization/search_org', (req, res) => vercelAdapter(req, res, searchOrgHandler));
 app.all('/src/flex_message/manage_flex_message', (req, res) => vercelAdapter(req, res, manageFlexHandler));
 app.all('/src/GetAuditLogs', (req, res) => vercelAdapter(req, res, getAuditLogsHandler));
-app.all('/src/richmenu', (req, res) => vercelAdapter(req, res, richmenuHandler));
+app.all('/src/richmenu_home', (req, res) => vercelAdapter(req, res, richmenuHandler));
+app.all('/src/richmenu_dashboard', (req, res) => vercelAdapter(req, res, richmenuDashboardHandler));
 app.all('/src/CheckSession', (req, res) => vercelAdapter(req, res, checkSessionHandler));
 app.all('/src/GetUserRoles', (req, res) => vercelAdapter(req, res, getUserRolesHandler));
 app.all('/src/flex_message/validate-push', (req, res) => vercelAdapter(req, res, validatePushHandler));
