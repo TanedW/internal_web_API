@@ -94,7 +94,7 @@ export default async function handler(req, res) {
         'editor_manage_case', 
         'editor_manage_menu', 
         'editor_manage_flex', 
-        'editor_manage_org_info', 
+        'editor_manage_org', 
         'editor_file_search', 
         'editor_search_duplicate_org', 
         'editor_manage_user'
