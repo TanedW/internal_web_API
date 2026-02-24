@@ -89,9 +89,15 @@ export default async function handler(req, res) {
 
       // กรองเฉพาะ Role ที่อนุญาต
       const validRolesList = [
-        'admin', 'editor', 'editor_manage_case', 'editor_manage_menu', 
-        'editor_manage_flex', 'editor_search_org', 'editor_file_search', 
-        'editor_search_duplicate_org', 'editor_mange_user'
+        'admin', 
+        'editor', 
+        'editor_manage_case', 
+        'editor_manage_menu', 
+        'editor_manage_flex', 
+        'editor_search_org_info', 
+        'editor_file_search', 
+        'editor_search_duplicate_org', 
+        'editor_manage_user'
       ];
       const assignedRoles = roles.filter(r => validRolesList.includes(r.toLowerCase()));
       if (assignedRoles.length === 0) assignedRoles.push('editor');
