@@ -470,3 +470,12 @@ export async function POST(req) {
 
   return Response.json({ error: 'Invalid action' }, { status: 400 });
 }
+
+// ============================================================
+// Default export — routes by HTTP method (required by index.js vercelAdapter)
+// ============================================================
+export default async function richmenuHandler(req, res) {
+  if (req.method === 'GET') return GET(req, res);
+  if (req.method === 'POST') return POST(req, res);
+  return Response.json({ error: 'Method Not Allowed' }, { status: 405 });
+}
