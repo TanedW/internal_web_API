@@ -43,6 +43,7 @@ export const primaryPool = new Pool(primaryConfig);
 export const replicaPool = new Pool(replicaConfig);
 
 export const query = (text, params) => primaryPool.query(text, params);
+export const pool = primaryPool;
 
 primaryPool.on('error', (err) => {
     console.error('Unexpected error on primary idle client', err);
