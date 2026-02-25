@@ -246,15 +246,18 @@ export async function POST(req) {
       );
       const lineBotId = upsertRows[0].id;
 
-      // ดึง bot userId + rich menu list พร้อมกัน (parallel) เพื่อลด latency
+      // ──────────────────────────────────────────────────────────
+      // เรียก LINE API 2 endpoint พร้อมกัน (parallel) ลด latency
+      // ──────────────────────────────────────────────────────────
+      const lineHeaders = { Authorization: `Bearer ${channel_token}` };
       const [botInfoRes, lineMenuRes] = await Promise.all([
-        !bot_user_id
-          ? fetch('https://api.line.me/v2/bot/info', { headers: { Authorization: `Bearer ${channel_token}` } })
-          : Promise.resolve(null),
-        fetch('https://api.line.me/v2/bot/richmenu/list', { headers: { Authorization: `Bearer ${channel_token}` } }),
+        bot_user_id
+          ? Promise.resolve(null)   // มี userId แล้ว ไม่ต้องเรียก
+          : fetch('https://api.line.me/v2/bot/info', { headers: lineHeaders }),
+        fetch('https://api.line.me/v2/bot/richmenu/list', { headers: lineHeaders }),
       ]);
 
-      // Resolve bot_user_id
+      // อัปเดต bot_user_id ถ้าไม่มีมาตั้งแต่ต้น
       let resolvedBotUserId = bot_user_id || null;
       if (botInfoRes) {
         try {
@@ -268,25 +271,19 @@ export async function POST(req) {
         }
       }
 
-      // Sync rich menus — batch INSERT ด้วย query เดียว เพื่อลดเวลา
+      // Batch INSERT rich menus ด้วย query เดียว (ไม่วน loop)
       const lineData = await lineMenuRes.json();
       const menus    = lineData.richmenus || [];
       let syncCount  = 0;
 
       if (menus.length > 0) {
-        // Build batch INSERT values
-        const values  = [];
-        const params  = [];
-        menus.forEach((menu, i) => {
-          const base = i * 3;
-          params.push(`($${base + 1}, $${base + 2}, $${base + 3})`);
-          values.push(lineBotId, menu.richMenuId, menu.name || 'Imported Menu');
-        });
+        const placeholders = menus.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(', ');
+        const flatValues   = menus.flatMap(m => [lineBotId, m.richMenuId, m.name || 'Imported Menu']);
         const { rowCount } = await query(
           `INSERT INTO bot_rich_menus (bot_id, rich_menu_id, menu_name)
-           VALUES ${params.join(', ')}
+           VALUES ${placeholders}
            ON CONFLICT (rich_menu_id) DO NOTHING`,
-          values
+          flatValues
         );
         syncCount = rowCount ?? menus.length;
       }
@@ -381,24 +378,25 @@ export async function POST(req) {
       const menus    = data.richmenus || [];
       let savedCount = 0;
 
-      for (const menu of menus) {
-        const result = await query(
+      if (menus.length > 0) {
+        // Batch INSERT ด้วย query เดียว
+        const placeholders = menus.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(', ');
+        const flatValues   = menus.flatMap(m => [botId, m.richMenuId, m.name || 'Imported Menu']);
+        const insertResult = await query(
           `INSERT INTO bot_rich_menus (bot_id, rich_menu_id, menu_name)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (rich_menu_id) DO NOTHING
-           RETURNING rich_menu_id`,
-          [botId, menu.richMenuId, menu.name || 'Imported Menu']
+           VALUES ${placeholders}
+           ON CONFLICT (rich_menu_id) DO NOTHING`,
+          flatValues
         );
+        savedCount = insertResult.rowCount ?? 0;
 
-        // Log เฉพาะเมนูใหม่จริงๆ
-        if (result.rows.length > 0) {
+        // Log รวมครั้งเดียว (ไม่วน loop ต่อเมนู)
+        if (savedCount > 0) {
           await saveAuditLog({
             admin, action: 'MENU_SYNCED',
             bot_key: botKey, bot_name: botName,
-            menu_id_to: menu.richMenuId, menu_name: menu.name || 'Imported Menu',
-            detail: `Sync เมนูจาก LINE | โดย: ${adminLabel}`,
+            detail: `Sync เมนูใหม่ ${savedCount} รายการจาก LINE | โดย: ${adminLabel}`,
           });
-          savedCount++;
         }
       }
 

@@ -42,23 +42,13 @@ const PORT = process.env.PORT || 8080;
 const upload = multer({ storage: multer.memoryStorage() });
 
 // Skip JSON body parsing for multipart/form-data so multer can read the stream
-// Also stash raw body string for fallback parsing in vercelAdapter
+// verify callback เก็บ raw buffer ไว้ใน req.rawBody เผื่อ fallback
 app.use((req, res, next) => {
     const ct = req.headers['content-type'] || '';
     if (ct.startsWith('multipart/form-data')) return next();
     express.json({
-        verify: (req, _res, buf) => { req.rawBody = buf.toString(); }
+        verify: (req, _res, buf) => { req.rawBody = buf; }
     })(req, res, next);
-});
-
-// Global request timeout — Vercel hobby limit is 10s; leave a 1s buffer
-app.use((req, res, next) => {
-    res.setTimeout(9000, () => {
-        if (!res.headersSent) {
-            res.status(504).json({ error: 'Request timed out' });
-        }
-    });
-    next();
 });
 
 app.use(cors({
@@ -86,8 +76,8 @@ async function vercelAdapter(req, res, handler) {
     try {
         const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
         
-        // Cache parsed body so multiple calls to .json() / .text() don't fail
-        let _parsedBody = req.body;
+        // สร้าง _parsedBody ไว้ cache — ป้องกัน req.body เป็น undefined
+        let _parsedBody = (req.body !== undefined && req.body !== null) ? req.body : undefined;
 
         const webReq = {
             method: req.method,
@@ -101,23 +91,20 @@ async function vercelAdapter(req, res, handler) {
             body: req.body,
             file: req.file,
             files: req.files,
-            // Mimic Web Request API — always resolve, never throw on empty body
             json: async () => {
-                if (_parsedBody !== undefined && _parsedBody !== null) return _parsedBody;
-                // Fallback: try to parse raw body string
+                // ถ้า express.json() parse สำเร็จแล้ว → ใช้เลย
+                if (_parsedBody !== undefined) return _parsedBody;
+                // fallback: parse จาก rawBody buffer
                 try {
-                    const raw = req.rawBody || '';
-                    _parsedBody = raw ? JSON.parse(raw) : {};
+                    _parsedBody = req.rawBody ? JSON.parse(req.rawBody.toString()) : {};
                 } catch {
                     _parsedBody = {};
                 }
                 return _parsedBody;
             },
             text: async () => {
-                if (_parsedBody !== undefined && _parsedBody !== null) {
-                    return typeof _parsedBody === 'string' ? _parsedBody : JSON.stringify(_parsedBody);
-                }
-                return req.rawBody || '';
+                if (_parsedBody !== undefined) return typeof _parsedBody === 'string' ? _parsedBody : JSON.stringify(_parsedBody);
+                return req.rawBody ? req.rawBody.toString() : '';
             },
         };
 
