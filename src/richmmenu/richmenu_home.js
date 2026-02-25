@@ -242,7 +242,7 @@ export async function POST(req) {
            picture_url = EXCLUDED.picture_url, bot_user_id = EXCLUDED.bot_user_id,
            updated_at = CURRENT_TIMESTAMP
          RETURNING id`,
-        [bot_name || 'บอทใหม่', bot_key, channel_token, picture_url || null, admin_email || null, bot_user_id || null]
+        [bot_name || 'บอทใหม่', bot_key, channel_token, picture_url || null, admin_email || 'system', bot_user_id || null]
       );
       const lineBotId = upsertRows[0].id;
 
