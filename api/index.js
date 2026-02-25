@@ -42,10 +42,23 @@ const PORT = process.env.PORT || 8080;
 const upload = multer({ storage: multer.memoryStorage() });
 
 // Skip JSON body parsing for multipart/form-data so multer can read the stream
+// Also stash raw body string for fallback parsing in vercelAdapter
 app.use((req, res, next) => {
     const ct = req.headers['content-type'] || '';
     if (ct.startsWith('multipart/form-data')) return next();
-    express.json()(req, res, next);
+    express.json({
+        verify: (req, _res, buf) => { req.rawBody = buf.toString(); }
+    })(req, res, next);
+});
+
+// Global request timeout — Vercel hobby limit is 10s; leave a 1s buffer
+app.use((req, res, next) => {
+    res.setTimeout(9000, () => {
+        if (!res.headersSent) {
+            res.status(504).json({ error: 'Request timed out' });
+        }
+    });
+    next();
 });
 
 app.use(cors({
@@ -73,11 +86,14 @@ async function vercelAdapter(req, res, handler) {
     try {
         const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
         
+        // Cache parsed body so multiple calls to .json() / .text() don't fail
+        let _parsedBody = req.body;
+
         const webReq = {
             method: req.method,
             url: fullUrl,
             headers: {
-                get: (key) => req.headers[key.toLowerCase()],
+                get: (key) => req.headers[key.toLowerCase()] ?? null,
                 ...req.headers
             },
             socket: req.socket,
@@ -85,8 +101,24 @@ async function vercelAdapter(req, res, handler) {
             body: req.body,
             file: req.file,
             files: req.files,
-            json: async () => req.body,
-            text: async () => JSON.stringify(req.body)
+            // Mimic Web Request API — always resolve, never throw on empty body
+            json: async () => {
+                if (_parsedBody !== undefined && _parsedBody !== null) return _parsedBody;
+                // Fallback: try to parse raw body string
+                try {
+                    const raw = req.rawBody || '';
+                    _parsedBody = raw ? JSON.parse(raw) : {};
+                } catch {
+                    _parsedBody = {};
+                }
+                return _parsedBody;
+            },
+            text: async () => {
+                if (_parsedBody !== undefined && _parsedBody !== null) {
+                    return typeof _parsedBody === 'string' ? _parsedBody : JSON.stringify(_parsedBody);
+                }
+                return req.rawBody || '';
+            },
         };
 
         const response = await handler(webReq, res);

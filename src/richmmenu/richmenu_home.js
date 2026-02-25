@@ -246,13 +246,18 @@ export async function POST(req) {
       );
       const lineBotId = upsertRows[0].id;
 
-      // ดึง bot userId จาก LINE API (ถ้ายังไม่มี)
+      // ดึง bot userId + rich menu list พร้อมกัน (parallel) เพื่อลด latency
+      const [botInfoRes, lineMenuRes] = await Promise.all([
+        !bot_user_id
+          ? fetch('https://api.line.me/v2/bot/info', { headers: { Authorization: `Bearer ${channel_token}` } })
+          : Promise.resolve(null),
+        fetch('https://api.line.me/v2/bot/richmenu/list', { headers: { Authorization: `Bearer ${channel_token}` } }),
+      ]);
+
+      // Resolve bot_user_id
       let resolvedBotUserId = bot_user_id || null;
-      if (!resolvedBotUserId) {
+      if (botInfoRes) {
         try {
-          const botInfoRes = await fetch('https://api.line.me/v2/bot/info', {
-            headers: { Authorization: `Bearer ${channel_token}` },
-          });
           const botInfo = await botInfoRes.json();
           resolvedBotUserId = botInfo.userId || null;
           if (resolvedBotUserId) {
@@ -263,30 +268,27 @@ export async function POST(req) {
         }
       }
 
-      // Sync rich menus จาก LINE → DB
-      const lineRes  = await fetch('https://api.line.me/v2/bot/richmenu/list', {
-        headers: { Authorization: `Bearer ${channel_token}` },
-      });
-      const lineData = await lineRes.json();
+      // Sync rich menus — batch INSERT ด้วย query เดียว เพื่อลดเวลา
+      const lineData = await lineMenuRes.json();
       const menus    = lineData.richmenus || [];
       let syncCount  = 0;
 
-      for (const menu of menus) {
-        await query(
-          `INSERT INTO bot_rich_menus (bot_id, rich_menu_id, menu_name)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (rich_menu_id) DO NOTHING`,
-          [lineBotId, menu.richMenuId, menu.name || 'Imported Menu']
-        );
-
-        // ✅ Log: ใครเพิ่มเมนูเข้าบอทตัวไหน
-        await saveAuditLog({
-          admin, action: 'MENU_SYNCED',
-          bot_key, bot_name: bot_name || 'บอทใหม่',
-          menu_id_to: menu.richMenuId, menu_name: menu.name || 'Imported Menu',
-          detail: `Sync เมนูจาก LINE เข้าระบบ | โดย: ${adminLabel}`,
+      if (menus.length > 0) {
+        // Build batch INSERT values
+        const values  = [];
+        const params  = [];
+        menus.forEach((menu, i) => {
+          const base = i * 3;
+          params.push(`($${base + 1}, $${base + 2}, $${base + 3})`);
+          values.push(lineBotId, menu.richMenuId, menu.name || 'Imported Menu');
         });
-        syncCount++;
+        const { rowCount } = await query(
+          `INSERT INTO bot_rich_menus (bot_id, rich_menu_id, menu_name)
+           VALUES ${params.join(', ')}
+           ON CONFLICT (rich_menu_id) DO NOTHING`,
+          values
+        );
+        syncCount = rowCount ?? menus.length;
       }
 
       // ✅ Log: ใครเพิ่มบอทตัวไหน
