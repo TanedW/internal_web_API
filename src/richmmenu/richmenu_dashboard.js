@@ -583,7 +583,10 @@ LIMIT 200`,
         }
 
         const botId = botRows[0].id;
-        const imageUrl = `/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${richMenuId}`;
+        const API_BASE =
+          process.env.API_BASE_URL ||
+          "https://internal-web-api-y4if.vercel.app";
+        const imageUrl = `${API_BASE}/src/richmmenu/richmenu_dashboard?action=image&botKey=...&menuId=${richMenuId}`;
 
         await query(
           `INSERT INTO bot_rich_menus
