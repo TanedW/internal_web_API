@@ -38,19 +38,36 @@ async function getAdminByEmail(email) {
 // audit_logs: admin_id(TEXT), action, bot_key, bot_name,
 //             menu_id_from, menu_id_to, menu_name, detail
 // ----------------------------------------------------------------------
-async function saveAuditLog({ admin_id, action, bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail, admin_uuid, admin_email, admin_name, admin_avatar }) {
+async function saveAuditLog({
+  admin,          // object จาก getAdminByEmail: { admin_id(UUID), email, first_name, last_name, profile_url }
+  action,
+  bot_key, bot_name,
+  menu_id_from, menu_id_to, menu_name,
+  detail,
+}) {
   try {
+    const adminUuid   = admin?.admin_id    ?? null;   // UUID
+    const adminEmail  = admin?.email       ?? null;
+    const adminName   = admin
+      ? ([admin.first_name, admin.last_name].filter(Boolean).join(' ') || admin.email)
+      : null;
+    const adminAvatar = admin?.profile_url ?? null;
+
     await query(
       `INSERT INTO audit_logs
-         (admin_id, action, bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail,
-          admin_uuid, admin_email, admin_name, admin_avatar,
-          created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-               now() AT TIME ZONE 'Asia/Bangkok')`,
+         (admin_id, admin_email, admin_name, admin_avatar,
+          action, bot_key, bot_name,
+          menu_id_from, menu_id_to, menu_name, detail)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
-        admin_id||null, action, bot_key||null, bot_name||null,
-        menu_id_from||null, menu_id_to||null, menu_name||null, detail||null,
-        admin_uuid||null, admin_email||null, admin_name||null, admin_avatar||null,
+        adminUuid, adminEmail, adminName, adminAvatar,
+        action,
+        bot_key      ?? null,
+        bot_name     ?? null,
+        menu_id_from ?? null,
+        menu_id_to   ?? null,
+        menu_name    ?? null,
+        detail       ?? null,
       ]
     );
   } catch (e) {
@@ -66,18 +83,6 @@ function adminDisplay(admin, fallbackEmail) {
   if (!admin) return fallbackEmail || 'unknown';
   const name = [admin.first_name, admin.last_name].filter(Boolean).join(' ');
   return name ? `${name} <${admin.email}>` : admin.email;
-}
-
-/** สร้าง object สำหรับใส่ใน saveAuditLog ครบทุก column */
-function adminFields(admin, fallbackEmail) {
-  if (!admin) return { admin_uuid: null, admin_email: fallbackEmail||null, admin_name: fallbackEmail||null, admin_avatar: null };
-  const name = [admin.first_name, admin.last_name].filter(Boolean).join(' ');
-  return {
-    admin_uuid:   admin.admin_id,
-    admin_email:  admin.email,
-    admin_name:   name || admin.email,
-    admin_avatar: admin.profile_url || null,
-  };
 }
 
 // ========================================
@@ -210,10 +215,9 @@ export async function POST(req) {
       );
       if (configCheck.length === 0) {
         await saveAuditLog({
-          admin_id: adminId, action: 'BOT_ADD_FAILED',
+          admin, action: 'BOT_ADD_FAILED',
           bot_key, bot_name: bot_name || null,
           detail: `Token ไม่พบในระบบ bot_config | โดย: ${adminLabel}`,
-          ...adminFields(admin, admin_email),
         });
         return Response.json({ message: 'ไม่พบ Token นี้ในระบบ bot_config กรุณาติดต่อผู้ดูแล' }, { status: 403 });
       }
@@ -266,21 +270,19 @@ export async function POST(req) {
 
         // ✅ Log: ใครเพิ่มเมนูเข้าบอทตัวไหน
         await saveAuditLog({
-          admin_id: adminId, action: 'MENU_SYNCED',
+          admin, action: 'MENU_SYNCED',
           bot_key, bot_name: bot_name || 'บอทใหม่',
           menu_id_to: menu.richMenuId, menu_name: menu.name || 'Imported Menu',
           detail: `Sync เมนูจาก LINE เข้าระบบ | โดย: ${adminLabel}`,
-          ...adminFields(admin, admin_email),
         });
         syncCount++;
       }
 
       // ✅ Log: ใครเพิ่มบอทตัวไหน
       await saveAuditLog({
-        admin_id: adminId, action: 'BOT_ADD',
+        admin, action: 'BOT_ADD',
         bot_key, bot_name: bot_name || 'บอทใหม่',
         detail: `เพิ่มบอทสำเร็จ sync เมนู ${syncCount} รายการ | โดย: ${adminLabel}`,
-        ...adminFields(admin, admin_email),
       });
 
       return Response.json(
@@ -312,9 +314,8 @@ export async function POST(req) {
       );
       if (botRows.length === 0) {
         await saveAuditLog({
-          admin_id: adminId, action: 'BOT_DELETE_FAILED',
+          admin, action: 'BOT_DELETE_FAILED',
           bot_key, detail: `ไม่พบบอทในระบบ | โดย: ${adminLabel}`,
-          ...adminFields(admin, admin_email),
         });
         return Response.json({ message: 'ไม่พบบอทในระบบ' }, { status: 404 });
       }
@@ -326,10 +327,9 @@ export async function POST(req) {
 
       // ✅ Log: ใครลบบอทตัวไหน
       await saveAuditLog({
-        admin_id: adminId, action: 'BOT_DELETE',
+        admin, action: 'BOT_DELETE',
         bot_key, bot_name: botName,
         detail: `ลบบอทออกจากระบบ | โดย: ${adminLabel}`,
-        ...adminFields(admin, admin_email),
       });
 
       return Response.json({ success: true, message: 'ลบบอทสำเร็จ' });
@@ -380,11 +380,10 @@ export async function POST(req) {
         // Log เฉพาะเมนูใหม่จริงๆ
         if (result.rows.length > 0) {
           await saveAuditLog({
-            admin_id: adminId, action: 'MENU_SYNCED',
+            admin, action: 'MENU_SYNCED',
             bot_key: botKey, bot_name: botName,
             menu_id_to: menu.richMenuId, menu_name: menu.name || 'Imported Menu',
             detail: `Sync เมนูจาก LINE | โดย: ${adminLabel}`,
-            ...adminFields(admin, admin_email),
           });
           savedCount++;
         }

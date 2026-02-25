@@ -36,7 +36,7 @@ async function getAdminByEmail(email) {
   if (!email) return null;
   try {
     const { rows } = await query(
-      `SELECT admin_id, email, first_name, last_name
+      `SELECT admin_id, email, first_name, last_name, profile_url
        FROM admin_system WHERE email = $1 AND is_deleted = false LIMIT 1`,
       [email]
     );
@@ -54,13 +54,47 @@ function adminDisplay(admin, fallback) {
   return name ? `${name} <${admin.email}>` : admin.email;
 }
 
-/** บันทึก Log ลง audit_logs โดยตรง */
-async function saveAuditLog({ admin_id, action, bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail }) {
+/** บันทึก Log ลง audit_logs
+ *
+ * audit_logs schema:
+ *   admin_id   UUID  → admin_system.admin_id
+ *   admin_email TEXT → snapshot email
+ *   admin_name  TEXT → snapshot ชื่อ-นามสกุล
+ *   admin_avatar TEXT → snapshot profile_url
+ *
+ * รับ admin object จาก getAdminByEmail() โดยตรง
+ */
+async function saveAuditLog({
+  admin,          // object { admin_id(UUID), email, first_name, last_name, profile_url } หรือ null
+  action,
+  bot_key, bot_name,
+  menu_id_from, menu_id_to, menu_name,
+  detail,
+}) {
   try {
+    const adminUuid   = admin?.admin_id   ?? null;   // UUID
+    const adminEmail  = admin?.email      ?? null;
+    const adminName   = admin
+      ? ([admin.first_name, admin.last_name].filter(Boolean).join(' ') || admin.email)
+      : null;
+    const adminAvatar = admin?.profile_url ?? null;
+
     await query(
-      `INSERT INTO audit_logs (admin_id, action, bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [admin_id||null, action, bot_key||null, bot_name||null, menu_id_from||null, menu_id_to||null, menu_name||null, detail||null]
+      `INSERT INTO audit_logs
+         (admin_id, admin_email, admin_name, admin_avatar,
+          action, bot_key, bot_name,
+          menu_id_from, menu_id_to, menu_name, detail)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        adminUuid, adminEmail, adminName, adminAvatar,
+        action,
+        bot_key      ?? null,
+        bot_name     ?? null,
+        menu_id_from ?? null,
+        menu_id_to   ?? null,
+        menu_name    ?? null,
+        detail       ?? null,
+      ]
     );
   } catch (e) {
     console.error('[saveAuditLog] error:', e.message);
@@ -235,10 +269,13 @@ export default async function handler(req, res) {
 
           if (!lineRes.ok) {
             const errorData = await lineRes.json();
+            const switchAdminFail = await getAdminByEmail(adminId);
             await saveAuditLog({
-              admin_id: adminId||'unknown', action: 'MENU_SWITCH_FAILED',
-              bot_key: botKey, menu_id_to: menuId,
-              detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message}`,
+              admin: switchAdminFail,
+              action: 'MENU_SWITCH_FAILED',
+              bot_key: botKey, bot_name: bot.bot_name||null,
+              menu_id_to: menuId,
+              detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message} | โดย: ${adminDisplay(switchAdminFail, adminId)}`,
             });
             client.release();
             return res.status(lineRes.status).json({ error: errorData.message || 'Failed to switch menu' });
@@ -262,12 +299,14 @@ export default async function handler(req, res) {
             [bot.id]
           );
           // ✅ Log: ใครเปลี่ยนเมนูบอทจากอันไหนไปอันไหน
+          const switchAdmin = await getAdminByEmail(adminId);
           await saveAuditLog({
-            admin_id: adminId||'unknown', action: 'MENU_SWITCH',
-            bot_key: botKey,
+            admin: switchAdmin,
+            action: 'MENU_SWITCH',
+            bot_key: botKey, bot_name: bot.bot_name||null,
             menu_id_from: prevMenu[0]?.rich_menu_id || null,
             menu_id_to: menuId,
-            detail: `เปลี่ยน Default Rich Menu สำเร็จ`,
+            detail: `เปลี่ยน Default Rich Menu สำเร็จ | โดย: ${adminDisplay(switchAdmin, adminId)}`,
           });
 
           return res.status(200).json({ success: true });
@@ -354,7 +393,6 @@ export default async function handler(req, res) {
         const { rows } = await query(
           `SELECT
              al.id,
-             al.admin_id,
              al.action,
              al.bot_key,
              al.bot_name,
@@ -362,18 +400,17 @@ export default async function handler(req, res) {
              al.menu_id_to,
              al.menu_name,
              al.detail,
-             al.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok' AS created_at,
-             a.email                                                        AS admin_email,
-             a.profile_url                                                  AS admin_avatar,
-             COALESCE(
+             al.created_at,
+             -- ✅ ใช้ snapshot ที่เก็บไว้ใน audit_logs โดยตรง
+             -- fallback JOIN admin_system สำหรับ records เก่า
+             COALESCE(al.admin_email,  a.email)                                    AS admin_email,
+             COALESCE(al.admin_name,
                NULLIF(TRIM(CONCAT_WS(' ', a.first_name, a.last_name)), ''),
-               a.email,
-               al.admin_id
-             )                                                              AS admin_name
+               a.email)                                                             AS admin_name,
+             COALESCE(al.admin_avatar, a.profile_url)                              AS admin_avatar
            FROM audit_logs al
            LEFT JOIN admin_system a
-             ON a.email = al.admin_id
-            AND a.is_deleted = false
+             ON a.admin_id = al.admin_id   -- admin_id ทั้งคู่เป็น UUID แล้ว
            WHERE al.bot_key = $1
            ORDER BY al.created_at DESC
            LIMIT 200`,
@@ -417,7 +454,6 @@ export default async function handler(req, res) {
 
         // ✅ ดึง Admin info ด้วย email (creatorId คือ email จาก frontend)
         const actor      = await getAdminByEmail(creatorId);
-        const actorId    = actor ? actor.admin_id.toString() : (creatorId || 'unknown');
         const actorLabel = adminDisplay(actor, creatorId);
 
         const token = await getTokenFromDB(botKey);
@@ -433,7 +469,8 @@ export default async function handler(req, res) {
 
         if (step1.code !== 200 || !step1.response?.richMenuId) {
           await saveAuditLog({
-            admin_id: actorId, action: 'MENU_UPLOAD_FAILED',
+            admin: actor,
+            action: 'MENU_UPLOAD_FAILED',
             bot_key: botKey, menu_name: menuName,
             detail: `สร้างโครงสร้างเมนูล้มเหลว | โดย: ${actorLabel}`,
           });
@@ -457,7 +494,8 @@ export default async function handler(req, res) {
         if (step2.code !== 200) {
           await callLineAPI(`https://api.line.me/v2/bot/richmenu/${richMenuId}`, 'DELETE', null, token);
           await saveAuditLog({
-            admin_id: actorId, action: 'MENU_UPLOAD_FAILED',
+            admin: actor,
+            action: 'MENU_UPLOAD_FAILED',
             bot_key: botKey, menu_name: menuName,
             detail: `อัปโหลดรูปภาพล้มเหลว | โดย: ${actorLabel}`,
           });
@@ -486,8 +524,10 @@ export default async function handler(req, res) {
 
         // ✅ Log: ใครเพิ่มเมนูเข้าบอทตัวไหน
         await saveAuditLog({
-          admin_id: actorId, action: 'MENU_UPLOAD',
-          bot_key: botKey, menu_id_to: richMenuId, menu_name: menuName,
+          admin: actor,
+          action: 'MENU_UPLOAD',
+          bot_key: botKey,
+          menu_id_to: richMenuId, menu_name: menuName,
           detail: `สร้าง Rich Menu ใหม่สำเร็จ | โดย: ${actorLabel}`,
         });
 
@@ -525,7 +565,6 @@ export default async function handler(req, res) {
 
         // ✅ ดึง Admin info ด้วย email
         const actor      = await getAdminByEmail(creatorId);
-        const actorId    = actor ? actor.admin_id.toString() : (creatorId || 'unknown');
         const actorLabel = adminDisplay(actor, creatorId);
 
         let savedCount = 0;
@@ -588,8 +627,9 @@ export default async function handler(req, res) {
         }
 
         await saveAuditLog({
-          admin_id: actorId, action: 'MENU_SAVE_FLOW',
-          bot_key: botKey,
+          admin: actor,
+          action: 'MENU_SAVE_FLOW',
+          bot_key: botKey, bot_name: resolvedBotName||null,
           detail: `บันทึก Flow ${savedCount}/${flowSteps.length} states | โดย: ${actorLabel}`,
         });
 
@@ -615,7 +655,6 @@ export default async function handler(req, res) {
 
         // ✅ ดึง Admin info ด้วย email
         const actor      = await getAdminByEmail(current_admin_id);
-        const actorId    = actor ? actor.admin_id.toString() : (current_admin_id || 'unknown');
         const actorLabel = adminDisplay(actor, current_admin_id);
 
         const { rows: botRows } = await query(
@@ -625,7 +664,8 @@ export default async function handler(req, res) {
 
         if (botRows.length === 0) {
           await saveAuditLog({
-            admin_id: actorId, action: 'MENU_DELETE_FAILED',
+            admin: actor,
+            action: 'MENU_DELETE_FAILED',
             bot_key: decodedBotKey, menu_id_from: menuId,
             detail: `ลบเมนูล้มเหลว: Invalid bot key | โดย: ${actorLabel}`,
           });
@@ -643,8 +683,10 @@ export default async function handler(req, res) {
 
           // ✅ Log: ใครลบเมนูออกจากบอทตัวไหน
           await saveAuditLog({
-            admin_id: actorId, action: 'MENU_DELETE',
-            bot_key: decodedBotKey, menu_id_from: menuId,
+            admin: actor,
+            action: 'MENU_DELETE',
+            bot_key: decodedBotKey,
+            menu_id_from: menuId,
             detail: `ลบ Rich Menu สำเร็จ | โดย: ${actorLabel}`,
           });
 
