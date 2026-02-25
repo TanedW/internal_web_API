@@ -52,8 +52,9 @@ export default async function handler(req, res) {
               jsonb_build_object(
                 'member', m.id,
                 'picture_profile', u.document_url,
-                'member_name', m.name,
-                'member_phone', m.phone,
+                'member_firstname', u.first_name,
+                'member_lastname', u.last_name,
+                'member_phone', u.phone,
                 'email', u.email,
                 'role', m.role,
                 'user_id', m.user_id,
@@ -97,3 +98,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ message: 'Error', error: error.message });
   }
 }
+
