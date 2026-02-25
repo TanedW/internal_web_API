@@ -26,6 +26,20 @@
 
 import { query, pool } from "../lib/db.js";
 import { callLineAPI } from "../lib/lineApi.js";
+import multer from "multer";
+
+// ✅ multer สำหรับรับ multipart/form-data (รูปภาพ)
+const upload = multer({ storage: multer.memoryStorage() });
+
+/** Apply multer middleware แบบ Promise */
+function runMiddleware(req, res, fn) {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result) => {
+      if (result instanceof Error) return reject(result);
+      return resolve(result);
+    });
+  });
+}
 
 // ============================================================
 // HELPERS
@@ -475,6 +489,9 @@ LIMIT 200`,
   // POST
   // ============================================================
   if (req.method === "POST") {
+    // ✅ Apply multer ก่อนอ่าน req.body และ req.file ทุกครั้ง
+    await runMiddleware(req, res, upload.single("menuImage"));
+
     // ── upload ───────────────────────────────────────────────
     // req.file มาจาก multer (optionalMulter ใน index.js)
     if (action === "upload") {
