@@ -13,6 +13,7 @@
 
 import { query, pool } from "../lib/db.js";
 import { callLineAPI } from "../lib/lineApi.js";
+import { writeAuditLog } from "../lib/logging.js";
 
 
 /** ดึงข้อมูล Admin จาก admin_system ด้วย email (Firebase email) */
@@ -57,6 +58,8 @@ async function saveAuditLog({
   menu_id_to,
   menu_name,
   detail,
+ ipAddress,
+ userAgent,
 }) {
   try {
     const adminUuid = admin?.admin_id ?? null; // UUID
@@ -67,6 +70,7 @@ async function saveAuditLog({
       : null;
     const adminAvatar = admin?.profile_url ?? null;
 
+    // ── 1. บันทึกลง PostgreSQL ──────────────────────────────
     await query(
       `INSERT INTO audit_logs
          (admin_id, admin_email, admin_name, admin_avatar,
@@ -86,6 +90,32 @@ async function saveAuditLog({
         menu_name ?? null,
         detail ?? null,
       ],
+    );
+
+    // ── 2. ส่งไป Google Cloud Logging ────────────────────────
+    const isFailed = action?.includes('_FAILED');
+    const severity = isFailed ? 'WARNING' : 'INFO';
+
+    await writeAuditLog(
+      {
+        adminId: adminUuid,
+        email: adminEmail,
+        firstName: admin?.first_name,
+        lastName: admin?.last_name,
+        actionType: action,
+        status: isFailed ? 'FAILED' : 'SUCCESS',
+        ipAddress: ipAddress ?? null,
+        userAgent: userAgent ?? null,
+        details: {
+          bot_key,
+          bot_name,
+          menu_id_from,
+          menu_id_to,
+          menu_name,
+          detail,
+        },
+      },
+      severity,
     );
   } catch (e) {
     console.error("[saveAuditLog] error:", e.message);
@@ -285,6 +315,8 @@ export default async function handler(req, res) {
               menu_id_to: menuId,
               detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message}}`,
               // detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message} | โดย: ${adminDisplay(switchAdminFail, adminId)}`,
+              ipAddress,
+              userAgent,
             });
             client.release();
             return res
@@ -322,6 +354,8 @@ export default async function handler(req, res) {
             menu_id_to: menuId,
             detail: `เปลี่ยน Default Rich Menu สำเร็จ`,
             // detail: `เปลี่ยน Default Rich Menu สำเร็จ | โดย: ${adminDisplay(switchAdmin, adminId)}`,
+            ipAddress,
+            userAgent,
           });
 
           return res.status(200).json({ success: true });
@@ -517,6 +551,8 @@ LIMIT 200`,
             menu_name: menuName,
             detail: `สร้างโครงสร้างเมนูล้มเหลว`,
             // detail: `สร้างโครงสร้างเมนูล้มเหลว | โดย: ${actorLabel}`,
+            ipAddress,
+            userAgent,
           });
           return res.status(400).json({
             error: "Failed to create menu structure",
@@ -549,6 +585,8 @@ LIMIT 200`,
             menu_name: menuName,
             detail: `อัปโหลดรูปภาพล้มเหลว`,
             // detail: `อัปโหลดรูปภาพล้มเหลว | โดย: ${actorLabel}`,
+            ipAddress,
+            userAgent,
           });
           return res.status(400).json({
             error: "Failed to upload image",
@@ -600,6 +638,8 @@ LIMIT 200`,
           menu_name: menuName,
           detail: `สร้าง Rich Menu ใหม่สำเร็จ`,
           // detail: `สร้าง Rich Menu ใหม่สำเร็จ | โดย: ${actorLabel}`,
+          ipAddress,
+          userAgent,
         });
 
         return res.status(200).json({
@@ -725,6 +765,8 @@ LIMIT 200`,
           bot_name: resolvedBotName || null,
           detail: `บันทึก Flow ${savedCount}/${flowSteps.length} states`,
           // detail: `บันทึก Flow ${savedCount}/${flowSteps.length} states | โดย: ${actorLabel}`,
+          ipAddress,
+          userAgent,
         });
 
         return res.status(200).json({
@@ -768,6 +810,8 @@ LIMIT 200`,
             menu_id_from: menuId,
             detail: `ลบเมนูล้มเหลว: Invalid bot key`,
             // detail: `ลบเมนูล้มเหลว: Invalid bot key | โดย: ${actorLabel}`,
+            ipAddress,
+            userAgent,
           });
           return res.status(400).json({ error: "Invalid bot key" });
         }
@@ -796,6 +840,8 @@ LIMIT 200`,
             bot_key: decodedBotKey,
             menu_id_from: menuId,
             detail: `ลบ Rich Menu สำเร็จ (soft delete)`,
+            ipAddress,
+            userAgent,
           });
 
           return res
@@ -809,6 +855,8 @@ LIMIT 200`,
           bot_key: decodedBotKey,
           menu_id_from: menuId,
           detail: `ลบเมนูล้มเหลว (LINE API): ${result.response?.message || "unknown error"}`,
+          ipAddress,
+          userAgent,
         });
 
         return res.status(result.code || 400).json({

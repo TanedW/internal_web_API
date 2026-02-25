@@ -1,8 +1,6 @@
 // src/proxy-search-org/search-org.js
 
-import { query } from '../lib/db.js';
 import { writeAuditLog } from '../lib/logging.js';
-import { callLineAPI } from '../lib/lineApi.js';
 
 // ----------------------------------------------------------------------
 // Helper: บันทึก Log
@@ -30,10 +28,9 @@ async function saveLog({ action_type, status, ipAddress, userAgent, details }) {
 function getClientInfo(req) {
   const forwarded = req.headers['x-forwarded-for'] ?? req.headers.get?.('x-forwarded-for');
   const ipAddress = forwarded
-    ? (typeof forwarded === 'string' ? forwarded.split(',')[0] : forwarded[0])
-    : null;
-  const userAgent =
-    req.headers['user-agent'] ?? req.headers.get?.('user-agent') ?? null;
+    ? (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : forwarded[0])
+    : (req.socket?.remoteAddress ?? null);
+  const userAgent = req.headers['user-agent'] ?? req.headers.get?.('user-agent') ?? null;
   return { ipAddress, userAgent };
 }
 
@@ -119,7 +116,6 @@ export async function GET(req, res) {
 // ----------------------------------------------------------------------
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method === 'GET')  return GET(req, res);
-  if (req.method === 'POST') return POST(req, res);
+  if (req.method === 'GET')    return GET(req, res);
   return res.status(405).json({ message: 'Method Not Allowed' });
 }

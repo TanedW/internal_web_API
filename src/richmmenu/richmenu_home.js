@@ -11,6 +11,7 @@
 // ============================================================
 
 import { query } from '../lib/db.js';
+import { writeAuditLog } from '../lib/logging.js';
 
 // ----------------------------------------------------------------------
 // Helper: ดึงข้อมูล Admin จาก admin_system โดยใช้ email (Firebase email)
@@ -44,6 +45,8 @@ async function saveAuditLog({
   bot_key, bot_name,
   menu_id_from, menu_id_to, menu_name,
   detail,
+  ipAddress,
+  userAgent,
 }) {
   try {
     const adminUuid   = admin?.admin_id    ?? null;   // UUID
@@ -53,6 +56,7 @@ async function saveAuditLog({
       : null;
     const adminAvatar = admin?.profile_url ?? null;
 
+    // ── 1. บันทึกลง PostgreSQL ──────────────────────────────
     await query(
       `INSERT INTO audit_logs
          (admin_id, admin_email, admin_name, admin_avatar,
@@ -70,6 +74,25 @@ async function saveAuditLog({
         detail       ?? null,
       ]
     );
+
+    // ── 2. ส่งไป Google Cloud Logging ────────────────────────
+    const isFailed = action?.includes('_FAILED');
+    const severity = isFailed ? 'WARNING' : 'INFO';
+
+    await writeAuditLog(
+      {
+        adminId:   adminUuid,
+        email:     adminEmail,
+        firstName: admin?.first_name,
+        lastName:  admin?.last_name,
+        actionType: action,
+        status:    isFailed ? 'FAILED' : 'SUCCESS',
+        ipAddress: ipAddress ?? null,
+        userAgent: userAgent ?? null,
+        details: { bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail },
+      },
+      severity,
+    );
   } catch (e) {
     console.error('[saveAuditLog] error:', e.message);
   }
@@ -85,12 +108,25 @@ function adminDisplay(admin, fallbackEmail) {
   return name ? `${name} <${admin.email}>` : admin.email;
 }
 
+// ----------------------------------------------------------------------
+// Helper: ดึง IP / User-Agent จาก request headers (รองรับทั้ง Express และ Web API)
+// ----------------------------------------------------------------------
+function getClientInfo(req) {
+  const forwarded = req.headers['x-forwarded-for'] ?? req.headers.get?.('x-forwarded-for');
+  const ipAddress = forwarded
+    ? (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : forwarded[0])
+    : (req.socket?.remoteAddress ?? null);
+  const userAgent = req.headers['user-agent'] ?? req.headers.get?.('user-agent') ?? null;
+  return { ipAddress, userAgent };
+}
+
 // ========================================
 // GET Handler
 // ========================================
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const action = searchParams.get('action');
+  const { ipAddress, userAgent } = getClientInfo(req);
   console.log('[richmenu_home] GET action:', action);
 
   // action=list_bots
@@ -163,6 +199,7 @@ export async function GET(req) {
 export async function POST(req) {
   const { searchParams } = new URL(req.url);
   const action = searchParams.get('action');
+  const { ipAddress, userAgent } = getClientInfo(req);
   console.log('[richmenu_home] POST action:', action);
 
   // action=verify_token
@@ -229,6 +266,8 @@ export async function POST(req) {
           admin, action: 'BOT_ADD_FAILED',
           bot_key, bot_name: bot_name || null,
           detail: `Token ไม่พบในระบบ bot_config | โดย: ${adminLabel}`,
+          ipAddress,
+          userAgent,
         });
         return Response.json({ message: 'ไม่พบ Token นี้ในระบบ bot_config กรุณาติดต่อผู้ดูแล' }, { status: 403 });
       }
@@ -293,6 +332,8 @@ export async function POST(req) {
         admin, action: 'BOT_ADD',
         bot_key, bot_name: bot_name || 'บอทใหม่',
         detail: `เพิ่มบอทสำเร็จ sync เมนู ${syncCount} รายการ | โดย: ${adminLabel}`,
+        ipAddress,
+        userAgent,
       });
 
       return Response.json(
@@ -326,6 +367,8 @@ export async function POST(req) {
         await saveAuditLog({
           admin, action: 'BOT_DELETE_FAILED',
           bot_key, detail: `ไม่พบบอทในระบบ | โดย: ${adminLabel}`,
+          ipAddress,
+          userAgent,
         });
         return Response.json({ message: 'ไม่พบบอทในระบบ' }, { status: 404 });
       }
@@ -340,6 +383,8 @@ export async function POST(req) {
         admin, action: 'BOT_DELETE',
         bot_key, bot_name: botName,
         detail: `ลบบอทออกจากระบบ | โดย: ${adminLabel}`,
+        ipAddress,
+        userAgent,
       });
 
       return Response.json({ success: true, message: 'ลบบอทสำเร็จ' });
@@ -396,6 +441,8 @@ export async function POST(req) {
             admin, action: 'MENU_SYNCED',
             bot_key: botKey, bot_name: botName,
             detail: `Sync เมนูใหม่ ${savedCount} รายการจาก LINE | โดย: ${adminLabel}`,
+            ipAddress,
+            userAgent,
           });
         }
       }
