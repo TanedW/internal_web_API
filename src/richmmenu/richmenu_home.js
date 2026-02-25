@@ -134,7 +134,7 @@ export async function GET(req) {
           [currentMenuId, botId]
         );
         imageUrl = menuRows[0]?.image_url
-          || `/api/richmenu?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`;
+          || `/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`;
       }
       return Response.json({ currentMenuId, imageUrl });
     } catch (error) {
