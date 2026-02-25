@@ -298,6 +298,7 @@ export default async function handler(req, res) {
               bot_name: bot.bot_name || null,
               menu_id_to: menuId,
               detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message}}`,
+              // detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message} | โดย: ${adminDisplay(switchAdminFail, adminId)}`,
             });
             client.release();
             return res
@@ -333,7 +334,8 @@ export default async function handler(req, res) {
             bot_name: bot.bot_name || null,
             menu_id_from: prevMenuId,
             menu_id_to: menuId,
-            detail: `เปลี่ยน Default Rich Menu สำเร็จ | โดย: ${adminDisplay(switchAdmin, adminId)}`,
+            detail: `เปลี่ยน Default Rich Menu สำเร็จ`,
+            // detail: `เปลี่ยน Default Rich Menu สำเร็จ | โดย: ${adminDisplay(switchAdmin, adminId)}`,
           });
 
           return res.status(200).json({ success: true });
@@ -527,7 +529,8 @@ LIMIT 200`,
             action: "MENU_UPLOAD_FAILED",
             bot_key: botKey,
             menu_name: menuName,
-            detail: `สร้างโครงสร้างเมนูล้มเหลว | โดย: ${actorLabel}`,
+            detail: `สร้างโครงสร้างเมนูล้มเหลว`,
+            // detail: `สร้างโครงสร้างเมนูล้มเหลว | โดย: ${actorLabel}`,
           });
           return res.status(400).json({
             error: "Failed to create menu structure",
@@ -558,7 +561,8 @@ LIMIT 200`,
             action: "MENU_UPLOAD_FAILED",
             bot_key: botKey,
             menu_name: menuName,
-            detail: `อัปโหลดรูปภาพล้มเหลว | โดย: ${actorLabel}`,
+            detail: `อัปโหลดรูปภาพล้มเหลว`,
+            // detail: `อัปโหลดรูปภาพล้มเหลว | โดย: ${actorLabel}`,
           });
           return res.status(400).json({
             error: "Failed to upload image",
@@ -608,7 +612,8 @@ LIMIT 200`,
           bot_key: botKey,
           menu_id_to: richMenuId,
           menu_name: menuName,
-          detail: `สร้าง Rich Menu ใหม่สำเร็จ | โดย: ${actorLabel}`,
+          detail: `สร้าง Rich Menu ใหม่สำเร็จ`,
+          // detail: `สร้าง Rich Menu ใหม่สำเร็จ | โดย: ${actorLabel}`,
         });
 
         return res.status(200).json({
@@ -732,7 +737,8 @@ LIMIT 200`,
           action: "MENU_SAVE_FLOW",
           bot_key: botKey,
           bot_name: resolvedBotName || null,
-          detail: `บันทึก Flow ${savedCount}/${flowSteps.length} states | โดย: ${actorLabel}`,
+          detail: `บันทึก Flow ${savedCount}/${flowSteps.length} states`,
+          // detail: `บันทึก Flow ${savedCount}/${flowSteps.length} states | โดย: ${actorLabel}`,
         });
 
         return res.status(200).json({
@@ -774,7 +780,8 @@ LIMIT 200`,
             action: "MENU_DELETE_FAILED",
             bot_key: decodedBotKey,
             menu_id_from: menuId,
-            detail: `ลบเมนูล้มเหลว: Invalid bot key | โดย: ${actorLabel}`,
+            detail: `ลบเมนูล้มเหลว: Invalid bot key`,
+            // detail: `ลบเมนูล้มเหลว: Invalid bot key | โดย: ${actorLabel}`,
           });
           return res.status(400).json({ error: "Invalid bot key" });
         }
@@ -798,7 +805,8 @@ LIMIT 200`,
             action: "MENU_DELETE",
             bot_key: decodedBotKey,
             menu_id_from: menuId,
-            detail: `ลบ Rich Menu สำเร็จ | โดย: ${actorLabel}`,
+            detail: `ลบ Rich Menu สำเร็จ`,
+            // detail: `ลบ Rich Menu สำเร็จ | โดย: ${actorLabel}`,
           });
 
           return res
