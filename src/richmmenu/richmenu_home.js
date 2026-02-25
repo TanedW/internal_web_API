@@ -220,11 +220,8 @@ export async function POST(req) {
       }
 
       // ดึงข้อมูล Admin สำหรับ Log
-      const { rows: actors } = await query(
-        'SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = $1',
-        [creator_id]
-      );
-      const actorAdmin = actors[0] || { admin_id: creator_id, email: 'unknown', first_name: null, last_name: null };
+      // หมายเหตุ: creator_id คือ Firebase UID (string) ไม่ใช่ UUID — ไม่สามารถ query admin_system โดยตรงได้
+      let actorAdmin = { admin_id: null, email: 'unknown', first_name: null, last_name: null };
 
       // ตรวจสอบ token ใน bot_config อีกครั้ง
       const { rows: configCheck } = await query(
@@ -351,11 +348,8 @@ export async function POST(req) {
       }
 
       // ดึงข้อมูล Admin สำหรับ Log
-      const { rows: actors } = await query(
-        'SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = $1',
-        [current_admin_id]
-      );
-      const actorAdmin = actors[0] || { admin_id: current_admin_id, email: 'unknown', first_name: null, last_name: null };
+      // หมายเหตุ: current_admin_id คือ Firebase UID (string) ไม่ใช่ UUID
+      let actorAdmin = { admin_id: null, email: 'unknown', first_name: null, last_name: null };
 
       const { rows: botRows } = await query(
         'SELECT id FROM line_bots WHERE bot_key = $1 AND is_deleted = false',
