@@ -297,7 +297,7 @@ export default async function handler(req, res) {
               bot_key: botKey,
               bot_name: bot.bot_name || null,
               menu_id_to: menuId,
-              detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message} | โดย: ${adminDisplay(switchAdminFail, adminId)}`,
+              detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message}}`,
             });
             client.release();
             return res
