@@ -232,8 +232,8 @@ export default async function handler(req, res) {
         for (const menu of lineMenus) {
           if (!dbMenuIds.includes(menu.richMenuId)) {
             await query(
-              `INSERT INTO bot_rich_menus (bot_id, rich_menu_id, menu_name)
-               VALUES ($1, $2, $3)`,
+              `INSERT INTO bot_rich_menus (bot_id, rich_menu_id, menu_name, is_deleted)
+               VALUES ($1, $2, $3, false)`,
               [bot.id, menu.richMenuId, menu.name || "Legacy Menu"],
             );
           }
@@ -246,7 +246,9 @@ export default async function handler(req, res) {
              image_url,
              is_active,
              created_at
-           FROM bot_rich_menus WHERE bot_id = $1 ORDER BY created_at DESC`,
+           FROM bot_rich_menus
+           WHERE bot_id = $1 AND (is_deleted = false OR is_deleted IS NULL)
+           ORDER BY created_at DESC`,
           [bot.id],
         );
 
@@ -795,9 +797,13 @@ LIMIT 200`,
         );
 
         if (result.code === 200) {
-          await query("DELETE FROM bot_rich_menus WHERE rich_menu_id = $1", [
-            menuId,
-          ]);
+          // ── Soft Delete: mark is_deleted = true แทนการลบจริง ──
+          await query(
+            `UPDATE bot_rich_menus
+             SET is_deleted = true, is_active = false
+             WHERE rich_menu_id = $1`,
+            [menuId],
+          );
 
           // ✅ Log: ใครลบเมนูออกจากบอทตัวไหน
           await saveAuditLog({
@@ -805,8 +811,7 @@ LIMIT 200`,
             action: "MENU_DELETE",
             bot_key: decodedBotKey,
             menu_id_from: menuId,
-            detail: `ลบ Rich Menu สำเร็จ`,
-            // detail: `ลบ Rich Menu สำเร็จ | โดย: ${actorLabel}`,
+            detail: `ลบ Rich Menu สำเร็จ (soft delete)`,
           });
 
           return res
@@ -814,20 +819,12 @@ LIMIT 200`,
             .json({ success: true, message: "Menu deleted successfully" });
         }
 
-        await saveAdminLog({
-          adminId: actor.admin_id,
-          email: actor.email,
-          first_name: actor.first_name,
-          last_name: actor.last_name,
-          action_type: "RICHMENU_DELETE",
-          status: "FAILED",
-          ipAddress,
-          userAgent,
-          details: {
-            reason: result.response?.message,
-            botKey: decodedBotKey,
-            menuId,
-          },
+        await saveAuditLog({
+          admin: actor,
+          action: "MENU_DELETE_FAILED",
+          bot_key: decodedBotKey,
+          menu_id_from: menuId,
+          detail: `ลบเมนูล้มเหลว (LINE API): ${result.response?.message || "unknown error"}`,
         });
 
         return res.status(result.code || 400).json({
