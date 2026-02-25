@@ -78,6 +78,8 @@ async function vercelAdapter(req, res, handler) {
             socket: req.socket,
             query: req.query,
             body: req.body,
+            file: req.file,
+            files: req.files,
             json: async () => req.body,
             text: async () => JSON.stringify(req.body)
         };
