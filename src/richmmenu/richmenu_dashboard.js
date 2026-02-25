@@ -1,17 +1,4 @@
 // src/richmmenu/richmenu_dashboard.js
-// ============================================================
-// RICHMENU DASHBOARD — Express Handler
-//
-// แก้ไขจากเวอร์ชัน Next.js App Router:
-//   ❌ export async function GET(req)   → ✅ export default handler(req, res)
-//   ❌ export async function POST(req)  → ✅ export default handler(req, res)
-//   ❌ import { primaryPool }           → ✅ import { pool }
-//   ❌ import('@/lib/lineApi')          → ✅ import { callLineAPI } from '../lib/lineApi.js'
-//   ❌ new URL(req.url).searchParams    → ✅ req.query
-//   ❌ await req.json()                 → ✅ req.body
-//   ❌ await req.formData()             → ✅ req.body + req.file (multer)
-//   ❌ Response.json(data, {status})    → ✅ res.status().json()
-//
 // Actions ที่รองรับ:
 //   GET  ?action=current&botKey=...           → ดึงเมนูที่ active + imageUrl
 //   GET  ?action=list&botKey=...              → ดึงรายการเมนูของบอท + auto sync
@@ -27,9 +14,6 @@
 import { query, pool } from "../lib/db.js";
 import { callLineAPI } from "../lib/lineApi.js";
 
-// ============================================================
-// HELPERS
-// ============================================================
 
 /** ดึงข้อมูล Admin จาก admin_system ด้วย email (Firebase email) */
 async function getAdminByEmail(email) {

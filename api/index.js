@@ -29,8 +29,9 @@ import manageOrgHandler from '../src/organization/manage_org.js';
 import searchOrgHandler from '../src/organization/search_org.js';
 import manageFlexHandler from '../src/flex_message/manage_flex_message.js';
 import getAuditLogsHandler from '../src/GetAuditLogs.js';
-import richmenuHandler from '../src/richmmenu/richmenu_home.js'
-import richmenuDashboardHandler from '../src/richmmenu/richmenu_dashboard.js'
+import richmenuHandler from '../src/richmmenu/richmenu_home.js';
+import richmenuDashboardHandler from '../src/richmmenu/richmenu_dashboard.js';
+import proxysearchorgHandler from '../src/proxy-search-org/search-org.js';
 import checkSessionHandler from '../src/CheckSession.js';
 import getUserRolesHandler from '../src/GetUserRoles.js';
 import validatePushHandler from '../src/flex_message/validate-push.js';
@@ -151,6 +152,7 @@ app.all('/src/organization/search_org', (req, res) => vercelAdapter(req, res, se
 app.all('/src/flex_message/manage_flex_message', (req, res) => vercelAdapter(req, res, manageFlexHandler));
 app.all('/src/GetAuditLogs', (req, res) => vercelAdapter(req, res, getAuditLogsHandler));
 app.all('/src/richmmenu/richmenu_home', (req, res) => vercelAdapter(req, res, richmenuHandler));
+app.all('/src/proxy-search-org/search-org', (req, res) => vercelAdapter(req, res, proxysearchorgHandler));
 app.all('/src/richmmenu/richmenu_dashboard', (req, res, next) => {
   const isUpload = req.method === 'POST' && req.query.action === 'upload';
   if (isUpload) {
