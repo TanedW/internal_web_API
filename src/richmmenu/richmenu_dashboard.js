@@ -186,7 +186,7 @@ export default async function handler(req, res) {
           );
           imageUrl =
             menuRows[0]?.image_url ||
-            `/src/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`;
+            `/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`;
         }
 
         return res.status(200).json({ currentMenuId, imageUrl });
@@ -583,7 +583,7 @@ LIMIT 200`,
         }
 
         const botId = botRows[0].id;
-        const imageUrl = `/src/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${richMenuId}`;
+        const imageUrl = `/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${richMenuId}`;
 
         await query(
           `INSERT INTO bot_rich_menus
