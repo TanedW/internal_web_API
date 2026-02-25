@@ -251,7 +251,7 @@ export default async function handler(req, res) {
         }
 
         const { rows: botRows } = await client.query(
-          'SELECT id, channel_token FROM line_bots WHERE bot_key = $1',
+          'SELECT id, bot_name, channel_token FROM line_bots WHERE bot_key = $1',
           [botKey]
         );
         const bot = botRows[0];
@@ -281,6 +281,13 @@ export default async function handler(req, res) {
             return res.status(lineRes.status).json({ error: errorData.message || 'Failed to switch menu' });
           }
 
+          // ✅ ดึง prevMenu BEFORE BEGIN transaction
+          const { rows: prevMenuRows } = await client.query(
+            'SELECT rich_menu_id FROM bot_rich_menus WHERE bot_id = $1 AND is_active = TRUE LIMIT 1',
+            [bot.id]
+          );
+          const prevMenuId = prevMenuRows[0]?.rich_menu_id || null;
+
           // Transaction: อัปเดต is_active
           await client.query('BEGIN');
           await client.query(
@@ -293,18 +300,14 @@ export default async function handler(req, res) {
           );
           await client.query('COMMIT');
 
-          // ดึง menu เดิมก่อนเปลี่ยน (menu_id_from)
-          const { rows: prevMenu } = await query(
-            'SELECT rich_menu_id FROM bot_rich_menus WHERE bot_id = $1 AND is_active = TRUE LIMIT 1',
-            [bot.id]
-          );
-          // ✅ Log: ใครเปลี่ยนเมนูบอทจากอันไหนไปอันไหน
+          // ✅ Log พร้อม admin info ครบ
           const switchAdmin = await getAdminByEmail(adminId);
           await saveAuditLog({
             admin: switchAdmin,
             action: 'MENU_SWITCH',
-            bot_key: botKey, bot_name: bot.bot_name||null,
-            menu_id_from: prevMenu[0]?.rich_menu_id || null,
+            bot_key: botKey,
+            bot_name: bot.bot_name || null,
+            menu_id_from: prevMenuId,
             menu_id_to: menuId,
             detail: `เปลี่ยน Default Rich Menu สำเร็จ | โดย: ${adminDisplay(switchAdmin, adminId)}`,
           });
@@ -400,9 +403,11 @@ export default async function handler(req, res) {
              al.menu_id_to,
              al.menu_name,
              al.detail,
-             al.created_at,
-             -- ✅ ใช้ snapshot ที่เก็บไว้ใน audit_logs โดยตรง
-             -- fallback JOIN admin_system สำหรับ records เก่า
+             -- ✅ แปลง created_at เป็น Asia/Bangkok ส่งออกไปเลย
+             to_char(
+               al.created_at AT TIME ZONE 'Asia/Bangkok',
+               'YYYY-MM-DD"T"HH24:MI:SS+07:00'
+             ) AS created_at,
              COALESCE(al.admin_email,  a.email)                                    AS admin_email,
              COALESCE(al.admin_name,
                NULLIF(TRIM(CONCAT_WS(' ', a.first_name, a.last_name)), ''),
@@ -410,7 +415,7 @@ export default async function handler(req, res) {
              COALESCE(al.admin_avatar, a.profile_url)                              AS admin_avatar
            FROM audit_logs al
            LEFT JOIN admin_system a
-             ON a.admin_id = al.admin_id   -- admin_id ทั้งคู่เป็น UUID แล้ว
+             ON a.admin_id = al.admin_id
            WHERE al.bot_key = $1
            ORDER BY al.created_at DESC
            LIMIT 200`,
