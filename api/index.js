@@ -1,6 +1,7 @@
 import 'dotenv/config';   
 import express from 'express';
 import cors from 'cors';
+import multer from 'multer';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -36,6 +37,9 @@ import validatePushHandler from '../src/flex_message/validate-push.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+
+// Multer for multipart/form-data (Rich Menu image uploads)
+const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(express.json());
 
@@ -121,7 +125,17 @@ app.all('/src/organization/search_org', (req, res) => vercelAdapter(req, res, se
 app.all('/src/flex_message/manage_flex_message', (req, res) => vercelAdapter(req, res, manageFlexHandler));
 app.all('/src/GetAuditLogs', (req, res) => vercelAdapter(req, res, getAuditLogsHandler));
 app.all('/src/richmmenu/richmenu_home', (req, res) => vercelAdapter(req, res, richmenuHandler));
-app.all('/src/richmmenu/richmenu_dashboard', (req, res) => vercelAdapter(req, res, richmenuDashboardHandler));
+app.all('/src/richmmenu/richmenu_dashboard', (req, res, next) => {
+  const isUpload = req.method === 'POST' && req.query.action === 'upload';
+  if (isUpload) {
+    upload.single('menuImage')(req, res, (err) => {
+      if (err) return res.status(400).json({ error: 'File upload error', details: err.message });
+      vercelAdapter(req, res, richmenuDashboardHandler);
+    });
+  } else {
+    vercelAdapter(req, res, richmenuDashboardHandler);
+  }
+});
 app.all('/src/CheckSession', (req, res) => vercelAdapter(req, res, checkSessionHandler));
 app.all('/src/GetUserRoles', (req, res) => vercelAdapter(req, res, getUserRolesHandler));
 app.all('/src/flex_message/validate-push', (req, res) => vercelAdapter(req, res, validatePushHandler));
