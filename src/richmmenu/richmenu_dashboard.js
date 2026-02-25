@@ -36,7 +36,7 @@ async function getAdminByEmail(email) {
   if (!email) return null;
   try {
     const { rows } = await query(
-      `SELECT admin_id, email, first_name, last_name
+      `SELECT admin_id, email, first_name, last_name, profile_url
        FROM admin_system WHERE email = $1 AND is_deleted = false LIMIT 1`,
       [email]
     );
@@ -54,13 +54,33 @@ function adminDisplay(admin, fallback) {
   return name ? `${name} <${admin.email}>` : admin.email;
 }
 
+/** สร้าง object สำหรับใส่ใน saveAuditLog ครบทุก column */
+function adminFields(admin, fallbackEmail) {
+  if (!admin) return { admin_uuid: null, admin_email: fallbackEmail||null, admin_name: fallbackEmail||null, admin_avatar: null };
+  const name = [admin.first_name, admin.last_name].filter(Boolean).join(' ');
+  return {
+    admin_uuid:   admin.admin_id,
+    admin_email:  admin.email,
+    admin_name:   name || admin.email,
+    admin_avatar: admin.profile_url || null,
+  };
+}
+
 /** บันทึก Log ลง audit_logs โดยตรง */
-async function saveAuditLog({ admin_id, action, bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail }) {
+async function saveAuditLog({ admin_id, action, bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail, admin_uuid, admin_email, admin_name, admin_avatar }) {
   try {
     await query(
-      `INSERT INTO audit_logs (admin_id, action, bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [admin_id||null, action, bot_key||null, bot_name||null, menu_id_from||null, menu_id_to||null, menu_name||null, detail||null]
+      `INSERT INTO audit_logs
+         (admin_id, action, bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail,
+          admin_uuid, admin_email, admin_name, admin_avatar,
+          created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+               now() AT TIME ZONE 'Asia/Bangkok')`,
+      [
+        admin_id||null, action, bot_key||null, bot_name||null,
+        menu_id_from||null, menu_id_to||null, menu_name||null, detail||null,
+        admin_uuid||null, admin_email||null, admin_name||null, admin_avatar||null,
+      ]
     );
   } catch (e) {
     console.error('[saveAuditLog] error:', e.message);
@@ -217,7 +237,7 @@ export default async function handler(req, res) {
         }
 
         const { rows: botRows } = await client.query(
-          'SELECT id, channel_token FROM line_bots WHERE bot_key = $1',
+          'SELECT id, bot_name, channel_token FROM line_bots WHERE bot_key = $1',
           [botKey]
         );
         const bot = botRows[0];
@@ -237,12 +257,20 @@ export default async function handler(req, res) {
             const errorData = await lineRes.json();
             await saveAuditLog({
               admin_id: adminId||'unknown', action: 'MENU_SWITCH_FAILED',
-              bot_key: botKey, menu_id_to: menuId,
+              bot_key: botKey, bot_name: bot.bot_name || null,
+              menu_id_to: menuId,
               detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message}`,
             });
             client.release();
             return res.status(lineRes.status).json({ error: errorData.message || 'Failed to switch menu' });
           }
+
+          // ดึง menu เดิมก่อนเปลี่ยน (ต้องทำก่อน Transaction)
+          const { rows: prevMenuRows } = await client.query(
+            'SELECT rich_menu_id FROM bot_rich_menus WHERE bot_id = $1 AND is_active = TRUE LIMIT 1',
+            [bot.id]
+          );
+          const prevMenuId = prevMenuRows[0]?.rich_menu_id || null;
 
           // Transaction: อัปเดต is_active
           await client.query('BEGIN');
@@ -256,18 +284,18 @@ export default async function handler(req, res) {
           );
           await client.query('COMMIT');
 
-          // ดึง menu เดิมก่อนเปลี่ยน (menu_id_from)
-          const { rows: prevMenu } = await query(
-            'SELECT rich_menu_id FROM bot_rich_menus WHERE bot_id = $1 AND is_active = TRUE LIMIT 1',
-            [bot.id]
-          );
+          // ดึง admin info
+          const switchAdmin      = await getAdminByEmail(adminId);
+          const switchAdminLabel = adminDisplay(switchAdmin, adminId);
+
           // ✅ Log: ใครเปลี่ยนเมนูบอทจากอันไหนไปอันไหน
           await saveAuditLog({
             admin_id: adminId||'unknown', action: 'MENU_SWITCH',
-            bot_key: botKey,
-            menu_id_from: prevMenu[0]?.rich_menu_id || null,
+            bot_key: botKey, bot_name: bot.bot_name || null,
+            menu_id_from: prevMenuId || null,
             menu_id_to: menuId,
-            detail: `เปลี่ยน Default Rich Menu สำเร็จ`,
+            detail: `เปลี่ยน Default Rich Menu สำเร็จ | โดย: ${switchAdminLabel}`,
+            ...adminFields(switchAdmin, adminId),
           });
 
           return res.status(200).json({ success: true });
@@ -353,16 +381,29 @@ export default async function handler(req, res) {
 
         const { rows } = await query(
           `SELECT
-             al.id, al.admin_id,
-             COALESCE(a.first_name || ' ' || a.last_name, a.email, al.admin_id) AS admin_name,
-             a.profile_url AS admin_avatar,
-             al.action, al.bot_key, al.bot_name,
-             al.menu_id_from, al.menu_id_to, al.menu_name,
-             al.detail, al.created_at
+             al.id,
+             al.admin_id,
+             al.action,
+             al.bot_key,
+             al.bot_name,
+             al.menu_id_from,
+             al.menu_id_to,
+             al.menu_name,
+             al.detail,
+             -- ✅ ใช้ข้อมูลที่เก็บไว้ใน audit_logs โดยตรง
+             -- fallback ไปหา admin_system ถ้า column ใหม่ว่าง (records เก่า)
+             COALESCE(al.admin_email, a.email, al.admin_id)                           AS admin_email,
+             COALESCE(al.admin_name,
+               NULLIF(TRIM(CONCAT_WS(' ', a.first_name, a.last_name)), ''),
+               a.email, al.admin_id)                                                  AS admin_name,
+             COALESCE(al.admin_avatar, a.profile_url)                                 AS admin_avatar,
+             -- ✅ แสดงเวลาไทย (ข้อมูลถูก insert ด้วย AT TIME ZONE 'Asia/Bangkok' แล้ว)
+             al.created_at
            FROM audit_logs al
-           LEFT JOIN admin_system a ON a.admin_id::text = al.admin_id
+           LEFT JOIN admin_system a ON a.email = al.admin_id AND a.is_deleted = false
            WHERE al.bot_key = $1
-           ORDER BY al.created_at DESC LIMIT 200`,
+           ORDER BY al.created_at DESC
+           LIMIT 200`,
           [decodeURIComponent(botKey)]
         );
 
@@ -422,6 +463,7 @@ export default async function handler(req, res) {
             admin_id: actorId, action: 'MENU_UPLOAD_FAILED',
             bot_key: botKey, menu_name: menuName,
             detail: `สร้างโครงสร้างเมนูล้มเหลว | โดย: ${actorLabel}`,
+            ...adminFields(actor, creatorId),
           });
           return res.status(400).json({
             error:   'Failed to create menu structure',
@@ -446,13 +488,14 @@ export default async function handler(req, res) {
             admin_id: actorId, action: 'MENU_UPLOAD_FAILED',
             bot_key: botKey, menu_name: menuName,
             detail: `อัปโหลดรูปภาพล้มเหลว | โดย: ${actorLabel}`,
+            ...adminFields(actor, creatorId),
           });
           return res.status(400).json({ error: 'Failed to upload image', details: step2.response?.message });
         }
 
         // STEP 3: บันทึกลง DB
         const { rows: botRows } = await query(
-          'SELECT id FROM line_bots WHERE bot_key = $1', [botKey]
+          'SELECT id, bot_name FROM line_bots WHERE bot_key = $1', [botKey]
         );
 
         if (botRows.length === 0) {
@@ -473,8 +516,10 @@ export default async function handler(req, res) {
         // ✅ Log: ใครเพิ่มเมนูเข้าบอทตัวไหน
         await saveAuditLog({
           admin_id: actorId, action: 'MENU_UPLOAD',
-          bot_key: botKey, menu_id_to: richMenuId, menu_name: menuName,
+          bot_key: botKey, bot_name: botRows[0]?.bot_name || null,
+          menu_id_to: richMenuId, menu_name: menuName,
           detail: `สร้าง Rich Menu ใหม่สำเร็จ | โดย: ${actorLabel}`,
+          ...adminFields(actor, creatorId),
         });
 
         return res.status(200).json({
@@ -575,8 +620,9 @@ export default async function handler(req, res) {
 
         await saveAuditLog({
           admin_id: actorId, action: 'MENU_SAVE_FLOW',
-          bot_key: botKey,
+          bot_key: botKey, bot_name: resolvedBotName || null,
           detail: `บันทึก Flow ${savedCount}/${flowSteps.length} states | โดย: ${actorLabel}`,
+          ...adminFields(actor, creatorId),
         });
 
         return res.status(200).json({ success: true, message: `บันทึก ${savedCount} states สำเร็จ` });
@@ -605,7 +651,7 @@ export default async function handler(req, res) {
         const actorLabel = adminDisplay(actor, current_admin_id);
 
         const { rows: botRows } = await query(
-          'SELECT channel_token FROM line_bots WHERE bot_key = $1',
+          'SELECT bot_name, channel_token FROM line_bots WHERE bot_key = $1',
           [decodedBotKey]
         );
 
@@ -614,6 +660,7 @@ export default async function handler(req, res) {
             admin_id: actorId, action: 'MENU_DELETE_FAILED',
             bot_key: decodedBotKey, menu_id_from: menuId,
             detail: `ลบเมนูล้มเหลว: Invalid bot key | โดย: ${actorLabel}`,
+            ...adminFields(actor, current_admin_id),
           });
           return res.status(400).json({ error: 'Invalid bot key' });
         }
@@ -630,8 +677,10 @@ export default async function handler(req, res) {
           // ✅ Log: ใครลบเมนูออกจากบอทตัวไหน
           await saveAuditLog({
             admin_id: actorId, action: 'MENU_DELETE',
-            bot_key: decodedBotKey, menu_id_from: menuId,
+            bot_key: decodedBotKey, bot_name: botRows[0]?.bot_name || null,
+            menu_id_from: menuId,
             detail: `ลบ Rich Menu สำเร็จ | โดย: ${actorLabel}`,
+            ...adminFields(actor, current_admin_id),
           });
 
           return res.status(200).json({ success: true, message: 'Menu deleted successfully' });
