@@ -178,16 +178,10 @@ export default async function handler(req, res) {
         const data = await lineRes.json();
         const currentMenuId = lineRes.ok ? data.richMenuId || null : null;
 
-        let imageUrl = null;
-        if (currentMenuId) {
-          const { rows: menuRows } = await query(
-            "SELECT image_url FROM bot_rich_menus WHERE rich_menu_id = $1 AND bot_id = $2",
-            [currentMenuId, botId],
-          );
-          imageUrl =
-            menuRows[0]?.image_url ||
-            `/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`;
-        }
+        // Generate image_url dynamically — ไม่ใช้ค่าจาก DB เพื่อให้ใช้ได้ทุก domain
+        const imageUrl = currentMenuId
+          ? `?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`
+          : null;
 
         return res.status(200).json({ currentMenuId, imageUrl });
       } catch (error) {
@@ -243,14 +237,20 @@ export default async function handler(req, res) {
           `SELECT
              rich_menu_id AS "richMenuId",
              menu_name    AS "name",
-             image_url,
              is_active,
              created_at
            FROM bot_rich_menus WHERE bot_id = $1 ORDER BY created_at DESC`,
           [bot.id],
         );
 
-        return res.status(200).json({ richmenus: finalRows });
+        // Generate image_url dynamically — ไม่เก็บ URL ใน DB เพื่อให้ใช้ได้ทุก domain
+        const encodedBotKey = encodeURIComponent(req.query.botKey);
+        const richmenus = finalRows.map((m) => ({
+          ...m,
+          image_url: `?action=image&botKey=${encodedBotKey}&menuId=${m.richMenuId}`,
+        }));
+
+        return res.status(200).json({ richmenus });
       } catch (error) {
         console.error("[list]", error);
         return res.status(500).json({ error: error.message });
@@ -583,17 +583,16 @@ LIMIT 200`,
         }
 
         const botId = botRows[0].id;
-        const imageUrl = `/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${richMenuId}`;
 
+        // ไม่เก็บ image_url ใน DB — generate dynamically ตอน query แทน
         await query(
           `INSERT INTO bot_rich_menus
-             (bot_id, rich_menu_id, menu_name, image_url, is_active)
-           VALUES ($1, $2, $3, $4, $5)`,
+             (bot_id, rich_menu_id, menu_name, is_active)
+           VALUES ($1, $2, $3, $4)`,
           [
             botId,
             richMenuId,
             menuName || `Menu_${Date.now()}`,
-            imageUrl,
             false,
           ],
         );
