@@ -41,7 +41,12 @@ const PORT = process.env.PORT || 8080;
 // Multer for multipart/form-data (Rich Menu image uploads)
 const upload = multer({ storage: multer.memoryStorage() });
 
-app.use(express.json());
+// Skip JSON body parsing for multipart/form-data so multer can read the stream
+app.use((req, res, next) => {
+    const ct = req.headers['content-type'] || '';
+    if (ct.startsWith('multipart/form-data')) return next();
+    express.json()(req, res, next);
+});
 
 app.use(cors({
     origin: function (origin, callback) {
