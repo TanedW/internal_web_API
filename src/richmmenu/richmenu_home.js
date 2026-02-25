@@ -133,8 +133,19 @@ export async function GET(req) {
           'SELECT image_url FROM bot_rich_menus WHERE rich_menu_id = $1 AND bot_id = $2',
           [currentMenuId, botId]
         );
-        imageUrl = menuRows[0]?.image_url
-          || `/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`;
+        // ดึง backend origin จาก req.url เพื่อสร้าง full URL — ไม่ต้องใช้ env var
+        const backendOrigin = new URL(req.url).origin;
+        const storedUrl = menuRows[0]?.image_url || null;
+        if (storedUrl && storedUrl.startsWith('http')) {
+          // full URL อยู่แล้ว ใช้ตรงๆ
+          imageUrl = storedUrl;
+        } else if (storedUrl) {
+          // relative path → ต่อ backend origin
+          imageUrl = `${backendOrigin}${storedUrl}`;
+        } else {
+          // ไม่มีใน DB → สร้างจาก menuId
+          imageUrl = `${backendOrigin}/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`;
+        }
       }
       return Response.json({ currentMenuId, imageUrl });
     } catch (error) {
