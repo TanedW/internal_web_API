@@ -437,19 +437,24 @@ export default async function handler(req, res) {
   al.menu_id_to,
   al.menu_name,
   al.detail,
-  -- ✅ TIMESTAMPTZ → แปลงเป็น Bangkok แล้วส่ง ISO+07:00 ออกไป
   to_char(
     al.created_at AT TIME ZONE 'Asia/Bangkok',
     'YYYY-MM-DD"T"HH24:MI:SS+07:00'
   ) AS created_at,
-  -- ✅ ใช้ snapshot ก่อน fallback JOIN (รองรับ records เก่า)
-  COALESCE(al.admin_email, a.email)                                   AS admin_email,
+  -- ✅ ชื่อเมนูเก่า: ดึงจาก bot_rich_menus โดยใช้ menu_id_from
+  COALESCE(brm_from.menu_name, al.menu_id_from) AS menu_name_from,
+  -- ✅ ชื่อเมนูใหม่: ใช้ snapshot ก่อน fallback จาก bot_rich_menus
+  COALESCE(al.menu_name, brm_to.menu_name, al.menu_id_to) AS menu_name_to,
+  -- ✅ Admin info
+  COALESCE(al.admin_email, a.email)             AS admin_email,
   COALESCE(al.admin_name,
     NULLIF(TRIM(CONCAT_WS(' ', a.first_name, a.last_name)), ''),
-    a.email)                                                           AS admin_name,
-  COALESCE(al.admin_avatar, a.profile_url)                            AS admin_avatar
+    a.email)                                    AS admin_name,
+  COALESCE(al.admin_avatar, a.profile_url)      AS admin_avatar
 FROM audit_logs al
-LEFT JOIN admin_system a ON a.admin_id = al.admin_id
+LEFT JOIN admin_system a         ON a.admin_id          = al.admin_id
+LEFT JOIN bot_rich_menus brm_from ON brm_from.rich_menu_id = al.menu_id_from
+LEFT JOIN bot_rich_menus brm_to   ON brm_to.rich_menu_id   = al.menu_id_to
 WHERE al.bot_key = $1
 ORDER BY al.created_at DESC
 LIMIT 200`,
