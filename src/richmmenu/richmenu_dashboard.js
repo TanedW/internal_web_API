@@ -269,11 +269,15 @@ export default async function handler(req, res) {
     }
 
     // ── switch ───────────────────────────────────────────────
-    // เปลี่ยน Default Rich Menu ผ่าน LINE API
-    // แล้วอัปเดต active_rich_menu_id ใน bot_config
+    // เปลี่ยนเมนูให้ทุกคนพร้อมกันด้วย /richmenu/batch
+    //
+    // ทำไมต้องใช้ batch:
+    //   - /user/all/richmenu = set แค่ "Default" → คนที่เคย link เมนูเก่าไว้ยังเห็นเมนูเก่า
+    //   - /richmenu/batch = unlink ทุกคนออกจากเมนูเก่า + link เมนูใหม่ให้ทุกคน
+    //   - ผลคือทุกคนเห็นเมนูเดียวกันหมด ไม่ว่าจะเพิ่มเพื่อนเมื่อไหร่
     if (action === "switch") {
       try {
-        const { botKey, menuId, type, adminId = null } = req.query;
+        const { botKey, menuId, adminId = null } = req.query;
 
         if (!botKey || !menuId) {
           return res.status(400).json({ error: "Missing botKey or menuId" });
@@ -284,57 +288,63 @@ export default async function handler(req, res) {
           return res.status(404).json({ error: "Bot token not found" });
         }
 
-        if (type === "batch") {
-          const lineRes = await fetch(
-            `https://api.line.me/v2/bot/user/all/richmenu/${menuId}`,
-            {
-              method: "POST",
-              headers: { Authorization: `Bearer ${bot.channel_access_token}` },
-            },
-          );
+        const token      = bot.channel_access_token;
+        const prevMenuId = bot.active_rich_menu_id || null;
 
-          if (!lineRes.ok) {
-            const errorData    = await lineRes.json();
-            const switchAdminFail = await getAdminByEmail(adminId);
-            await saveAuditLog({
-              admin: switchAdminFail,
-              action: "MENU_SWITCH_FAILED",
-              bot_key: botKey,
-              bot_name: bot.nickname || null,
-              menu_id_to: menuId,
-              detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message}`,
-              ipAddress,
-              userAgent,
-            });
-            return res.status(lineRes.status).json({ error: errorData.message || "Failed to switch menu" });
-          }
+        // STEP 1: ส่ง batch operations
+        //   - unlink ทุกคนออกจากเมนูเก่า (ถ้ามี)
+        //   - link เมนูใหม่ให้ทุกคน
+        const operations = [];
+        if (prevMenuId && prevMenuId !== menuId) {
+          operations.push({ type: "unlink", from: { type: "richmenu", richMenuId: prevMenuId } });
+        }
+        operations.push({ type: "link", to: { type: "richmenu", richMenuId: menuId } });
 
-          // บันทึก prevMenuId ก่อนอัปเดต
-          const prevMenuId = bot.active_rich_menu_id || null;
+        const batchRes = await fetch("https://api.line.me/v2/bot/richmenu/batch", {
+          method: "POST",
+          headers: {
+            Authorization:  `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ operations }),
+        });
 
-          // อัปเดต active_rich_menu_id ใน bot_config (atomic — ไม่ต้องใช้ transaction)
-          await query(
-            "UPDATE bot_config SET active_rich_menu_id = $1 WHERE bot_id = $2",
-            [menuId, botKey],
-          );
-
-          const switchAdmin = await getAdminByEmail(adminId);
+        if (!batchRes.ok) {
+          const errorData       = await batchRes.json();
+          const switchAdminFail = await getAdminByEmail(adminId);
           await saveAuditLog({
-            admin: switchAdmin,
-            action: "MENU_SWITCH",
+            admin: switchAdminFail,
+            action: "MENU_SWITCH_FAILED",
             bot_key: botKey,
             bot_name: bot.nickname || null,
-            menu_id_from: prevMenuId,
             menu_id_to: menuId,
-            detail: `เปลี่ยน Default Rich Menu สำเร็จ`,
+            detail: `เปลี่ยนเมนูล้มเหลว (batch): ${errorData.message || JSON.stringify(errorData)}`,
             ipAddress,
             userAgent,
           });
-
-          return res.status(200).json({ success: true });
+          return res.status(batchRes.status).json({ error: errorData.message || "Failed to switch menu" });
         }
 
-        return res.status(400).json({ error: "Unsupported switch type" });
+        // STEP 2: อัปเดต active_rich_menu_id ใน DB
+        await query(
+          "UPDATE bot_config SET active_rich_menu_id = $1 WHERE bot_id = $2",
+          [menuId, botKey],
+        );
+
+        const switchAdmin = await getAdminByEmail(adminId);
+        await saveAuditLog({
+          admin: switchAdmin,
+          action: "MENU_SWITCH",
+          bot_key: botKey,
+          bot_name: bot.nickname || null,
+          menu_id_from: prevMenuId,
+          menu_id_to: menuId,
+          detail: `เปลี่ยนเมนูสำเร็จ (batch — ทุกคนเห็นเมนูใหม่)`,
+          ipAddress,
+          userAgent,
+        });
+
+        return res.status(200).json({ success: true });
       } catch (error) {
         console.error("[switch]", error);
         return res.status(500).json({ error: error.message });
