@@ -261,11 +261,11 @@ export async function POST(req) {
   // action=add_bot
   // อัปเดต bot_config ด้วยข้อมูลจาก LINE (ไม่ insert แถวใหม่)
   // frontend ส่งมา: bot_name, bot_key (=bot_id), channel_token,
-  //                 picture_url, admin_email, bot_user_id
+  //                 picture_url, admin_email
   // ──────────────────────────────────────────────────────────────────
   if (action === 'add_bot') {
     try {
-      const { bot_name, bot_key, channel_token, picture_url, admin_email, bot_user_id } = await req.json();
+      const { bot_name, bot_key, channel_token, picture_url, admin_email } = await req.json();
 
       if (!bot_key || !channel_token) {
         return Response.json({ message: 'ข้อมูลไม่ครบ (bot_key, channel_token)' }, { status: 400 });
@@ -293,23 +293,17 @@ export async function POST(req) {
 
       // ดึง bot info + rich menu list พร้อมกัน (parallel)
       const [botInfoRes, lineMenuRes] = await Promise.all([
-        bot_user_id
-          ? Promise.resolve(null)
-          : fetch('https://api.line.me/v2/bot/info', { headers: lineHeaders }),
+        fetch('https://api.line.me/v2/bot/info', { headers: lineHeaders }),
         fetch('https://api.line.me/v2/bot/richmenu/list', { headers: lineHeaders }),
       ]);
 
-      let resolvedBotUserId  = bot_user_id || null;
       let resolvedPictureUrl = picture_url || null;
 
-      if (botInfoRes) {
-        try {
-          const botInfo      = await botInfoRes.json();
-          resolvedBotUserId  = botInfo.userId       || null;
-          resolvedPictureUrl = resolvedPictureUrl   || botInfo.pictureUrl || null;
-        } catch (e) {
-          console.warn('[add_bot] ดึง bot info ไม่ได้:', e.message);
-        }
+      try {
+        const botInfo      = await botInfoRes.json();
+        resolvedPictureUrl = resolvedPictureUrl || botInfo.pictureUrl || null;
+      } catch (e) {
+        console.warn('[add_bot] ดึง bot info ไม่ได้:', e.message);
       }
 
       // ดึง rich_menus เดิมเพื่อ merge (รักษา image_url)
@@ -336,14 +330,12 @@ export async function POST(req) {
         `UPDATE bot_config SET
            nickname         = COALESCE($1, nickname),
            picture_url      = COALESCE($2, picture_url),
-           bot_user_id      = COALESCE($3, bot_user_id),
-           rich_menus       = $4::jsonb,
+           rich_menus       = $3::jsonb,
            richmenu_enabled = true
-         WHERE bot_id = $5`,
+         WHERE bot_id = $4`,
         [
           bot_name || null,
           resolvedPictureUrl,
-          resolvedBotUserId,
           JSON.stringify(mergedMenus),
           bot_key,
         ]
