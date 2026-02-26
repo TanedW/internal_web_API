@@ -144,7 +144,7 @@ async function getTokenFromDB(botKey) {
 async function getBotConfig(botKey) {
   const { rows } = await query(
     `SELECT id, nickname, bot_id, channel_access_token,
-            bot_user_id, active_rich_menu_id, rich_menus
+            active_rich_menu_id, rich_menus
      FROM bot_config
      WHERE bot_id = $1 AND richmenu_enabled = true
      LIMIT 1`,
@@ -572,7 +572,7 @@ export default async function handler(req, res) {
 
     // ── save_flow ────────────────────────────────────────────
     // บันทึก Flow (state + action-list)
-    // ใช้ bot_user_id จาก bot_config แทนจาก line_bots
+    // ใช้ bot_id จาก bot_config แทน bot_user_id (bot_id = LINE userId ของบอท)
     if (action === "save_flow") {
       try {
         const { botKey, botName, flowSteps, creatorId } = req.body;
@@ -581,19 +581,19 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: "botKey and flowSteps are required" });
         }
 
-        // ดึง bot_user_id จาก bot_config
+        // ดึง bot_id จาก bot_config (bot_id = LINE userId ของบอท ใช้แทน bot_user_id)
         const { rows: botRows } = await query(
-          `SELECT bot_user_id, nickname FROM bot_config
+          `SELECT bot_id, nickname FROM bot_config
            WHERE (bot_id = $1 OR id::text = $1)
            AND richmenu_enabled = true
            LIMIT 1`,
           [String(botKey)],
         );
-        const botUserId       = botRows[0]?.bot_user_id;
+        const botUserId       = botRows[0]?.bot_id;
         const resolvedBotName = botName || botRows[0]?.nickname || botKey;
 
         if (!botUserId) {
-          return res.status(400).json({ error: "ไม่พบ bot_user_id กรุณาเพิ่มบอทใหม่อีกครั้ง" });
+          return res.status(400).json({ error: "ไม่พบ bot_id กรุณาเพิ่มบอทใหม่อีกครั้ง" });
         }
 
         const actor      = await getAdminByEmail(creatorId);
