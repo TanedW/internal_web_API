@@ -2,12 +2,23 @@
 // API ROUTE — สำหรับหน้า richmenu-home (page.jsx) เท่านั้น
 //
 // Actions ที่รองรับ:
-//   GET  ?action=list_bots          → ดึงรายการบอททั้งหมด
+//   GET  ?action=list_bots          → ดึงรายการบอททั้งหมดจาก bot_config
 //   GET  ?action=current&botKey=... → ดึงเมนูที่ active + imageUrl
 //   POST ?action=verify_token       → ตรวจสอบ Channel Access Token
-//   POST ?action=add_bot            → เพิ่มบอทใหม่เข้าระบบ
-//   POST ?action=delete_bot         → Soft Delete บอท
-//   POST ?action=sync               → Sync Rich Menu จาก LINE → DB
+//   POST ?action=add_bot            → อัปเดตข้อมูลบอทใน bot_config
+//   POST ?action=delete_bot         → Soft Delete บอท (is_deleted = true)
+//   POST ?action=sync               → Sync Rich Menu จาก LINE → bot_config.rich_menus
+//
+// ⚠️  ไม่ใช้ตาราง line_bots และ bot_rich_menus แล้ว
+//     ข้อมูลทั้งหมดอยู่ใน bot_config
+//
+// Columns ที่ใช้ใน bot_config:
+//   id, nickname, bot_id (ใช้แทน bot_key), channel_access_token,
+//   picture_url, bot_user_id, is_deleted,
+//   active_rich_menu_id, rich_menus (JSONB array ของ rich menu)
+//
+// โครงสร้างแต่ละ element ใน rich_menus JSONB:
+//   { richMenuId, name, image_url, is_deleted }
 // ============================================================
 
 import { query } from '../lib/db.js';
@@ -15,7 +26,6 @@ import { writeAuditLog } from '../lib/logging.js';
 
 // ----------------------------------------------------------------------
 // Helper: ดึงข้อมูล Admin จาก admin_system โดยใช้ email (Firebase email)
-// คืน { admin_id, email, first_name, last_name } หรือ null
 // ----------------------------------------------------------------------
 async function getAdminByEmail(email) {
   if (!email) return null;
@@ -35,12 +45,10 @@ async function getAdminByEmail(email) {
 }
 
 // ----------------------------------------------------------------------
-// Helper: บันทึก Log ลงตาราง audit_logs โดยตรง
-// audit_logs: admin_id(TEXT), action, bot_key, bot_name,
-//             menu_id_from, menu_id_to, menu_name, detail
+// Helper: บันทึก Log ลงตาราง audit_logs + Google Cloud Logging
 // ----------------------------------------------------------------------
 async function saveAuditLog({
-  admin,          // object จาก getAdminByEmail: { admin_id(UUID), email, first_name, last_name, profile_url }
+  admin,
   action,
   bot_key, bot_name,
   menu_id_from, menu_id_to, menu_name,
@@ -49,14 +57,13 @@ async function saveAuditLog({
   userAgent,
 }) {
   try {
-    const adminUuid   = admin?.admin_id    ?? null;   // UUID
+    const adminUuid   = admin?.admin_id    ?? null;
     const adminEmail  = admin?.email       ?? null;
     const adminName   = admin
       ? ([admin.first_name, admin.last_name].filter(Boolean).join(' ') || admin.email)
       : null;
     const adminAvatar = admin?.profile_url ?? null;
 
-    // ── 1. บันทึกลง PostgreSQL ──────────────────────────────
     await query(
       `INSERT INTO audit_logs
          (admin_id, admin_email, admin_name, admin_avatar,
@@ -75,42 +82,32 @@ async function saveAuditLog({
       ]
     );
 
-    // ── 2. ส่งไป Google Cloud Logging ────────────────────────
     const isFailed = action?.includes('_FAILED');
-    const severity = isFailed ? 'WARNING' : 'INFO';
-
     await writeAuditLog(
       {
-        adminId:   adminUuid,
-        email:     adminEmail,
-        firstName: admin?.first_name,
-        lastName:  admin?.last_name,
+        adminId:    adminUuid,
+        email:      adminEmail,
+        firstName:  admin?.first_name,
+        lastName:   admin?.last_name,
         actionType: action,
-        status:    isFailed ? 'FAILED' : 'SUCCESS',
-        ipAddress: ipAddress ?? null,
-        userAgent: userAgent ?? null,
-        details: { bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail },
+        status:     isFailed ? 'FAILED' : 'SUCCESS',
+        ipAddress:  ipAddress ?? null,
+        userAgent:  userAgent ?? null,
+        details:    { bot_key, bot_name, menu_id_from, menu_id_to, menu_name, detail },
       },
-      severity,
+      isFailed ? 'WARNING' : 'INFO',
     );
   } catch (e) {
     console.error('[saveAuditLog] error:', e.message);
   }
 }
 
-// ----------------------------------------------------------------------
-// Helper: สร้าง display string จาก admin object
-// ตัวอย่าง: "สมชาย ใจดี <somchai@email.com>"
-// ----------------------------------------------------------------------
 function adminDisplay(admin, fallbackEmail) {
   if (!admin) return fallbackEmail || 'unknown';
   const name = [admin.first_name, admin.last_name].filter(Boolean).join(' ');
   return name ? `${name} <${admin.email}>` : admin.email;
 }
 
-// ----------------------------------------------------------------------
-// Helper: ดึง IP / User-Agent จาก request headers (รองรับทั้ง Express และ Web API)
-// ----------------------------------------------------------------------
 function getClientInfo(req) {
   const forwarded = req.headers['x-forwarded-for'] ?? req.headers.get?.('x-forwarded-for');
   const ipAddress = forwarded
@@ -129,15 +126,23 @@ export async function GET(req) {
   const { ipAddress, userAgent } = getClientInfo(req);
   console.log('[richmenu_home] GET action:', action);
 
+  // ──────────────────────────────────────────────────────────────────
   // action=list_bots
+  // ดึงรายการบอทจาก bot_config (เฉพาะที่ไม่ถูก soft delete)
+  // ──────────────────────────────────────────────────────────────────
   if (action === 'list_bots') {
     try {
       const { rows } = await query(
-        'SELECT * FROM line_bots WHERE is_deleted = false ORDER BY created_at DESC'
+        `SELECT id, nickname, bot_id, picture_url
+         FROM bot_config
+         WHERE is_deleted = false OR is_deleted IS NULL
+         ORDER BY id DESC`
       );
       return Response.json(rows.map((row) => ({
-        id: row.id, name: row.bot_name, key: row.bot_key,
-        pictureUrl: row.picture_url, creator_id: row.creator_id,
+        id:         row.id,
+        name:       row.nickname,
+        key:        row.bot_id,      // bot_id ใช้แทน bot_key
+        pictureUrl: row.picture_url,
       })));
     } catch (error) {
       console.error('[list_bots] Error:', error);
@@ -145,44 +150,52 @@ export async function GET(req) {
     }
   }
 
+  // ──────────────────────────────────────────────────────────────────
   // action=current
+  // ดึง active menu จาก LINE API
+  // หา image_url จาก bot_config.rich_menus JSONB
+  // ──────────────────────────────────────────────────────────────────
   if (action === 'current') {
     try {
       const botKey = searchParams.get('botKey');
       if (!botKey) return Response.json({ error: 'botKey is required' }, { status: 400 });
 
       const { rows: botRows } = await query(
-        'SELECT id, channel_token FROM line_bots WHERE bot_key = $1', [botKey]
+        `SELECT channel_access_token, active_rich_menu_id, rich_menus
+         FROM bot_config
+         WHERE bot_id = $1 AND (is_deleted = false OR is_deleted IS NULL)
+         LIMIT 1`,
+        [botKey]
       );
       if (botRows.length === 0) return Response.json({ error: 'Bot not found' }, { status: 404 });
 
-      const { id: botId, channel_token: token } = botRows[0];
+      const bot   = botRows[0];
+      const token = bot.channel_access_token;
+
+      // เรียก LINE API เพื่อดู default rich menu ปัจจุบัน
       const lineRes = await fetch('https://api.line.me/v2/bot/user/all/richmenu', {
         method: 'GET', headers: { Authorization: `Bearer ${token}` },
       });
       const data = await lineRes.json();
       const currentMenuId = lineRes.ok ? (data.richMenuId || null) : null;
 
+      // หา image_url จาก rich_menus JSONB
       let imageUrl = null;
       if (currentMenuId) {
-        const { rows: menuRows } = await query(
-          'SELECT image_url FROM bot_rich_menus WHERE rich_menu_id = $1 AND bot_id = $2',
-          [currentMenuId, botId]
-        );
-        // ดึง backend origin จาก req.url เพื่อสร้าง full URL — ไม่ต้องใช้ env var
+        const richMenus = Array.isArray(bot.rich_menus) ? bot.rich_menus : [];
+        const found     = richMenus.find((m) => m.richMenuId === currentMenuId);
         const backendOrigin = new URL(req.url).origin;
-        const storedUrl = menuRows[0]?.image_url || null;
-        if (storedUrl && storedUrl.startsWith('http')) {
-          // full URL อยู่แล้ว ใช้ตรงๆ
-          imageUrl = storedUrl;
-        } else if (storedUrl) {
-          // relative path → ต่อ backend origin
-          imageUrl = `${backendOrigin}${storedUrl}`;
+
+        if (found?.image_url?.startsWith('http')) {
+          imageUrl = found.image_url;
+        } else if (found?.image_url) {
+          imageUrl = `${backendOrigin}${found.image_url}`;
         } else {
-          // ไม่มีใน DB → สร้างจาก menuId
+          // fallback: proxy image จาก LINE
           imageUrl = `${backendOrigin}/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`;
         }
       }
+
       return Response.json({ currentMenuId, imageUrl });
     } catch (error) {
       console.error('[current] Error:', error);
@@ -202,20 +215,25 @@ export async function POST(req) {
   const { ipAddress, userAgent } = getClientInfo(req);
   console.log('[richmenu_home] POST action:', action);
 
+  // ──────────────────────────────────────────────────────────────────
   // action=verify_token
+  // ตรวจว่า token อยู่ใน bot_config แล้วตรวจสอบกับ LINE API
+  // ──────────────────────────────────────────────────────────────────
   if (action === 'verify_token') {
     try {
       const { token } = await req.json();
       if (!token) return Response.json({ message: 'กรุณาใส่ Token' }, { status: 400 });
 
       const { rows: configRows } = await query(
-        'SELECT * FROM bot_config WHERE channel_access_token = $1 LIMIT 1', [token]
+        'SELECT * FROM bot_config WHERE channel_access_token = $1 LIMIT 1',
+        [token]
       );
       if (configRows.length === 0) {
         return Response.json({ message: 'ไม่พบ Token นี้ในระบบ กรุณาติดต่อผู้ดูแล' }, { status: 404 });
       }
 
       const botConfig = configRows[0];
+
       const lineRes = await fetch('https://api.line.me/v2/bot/info', {
         method: 'GET', headers: { Authorization: `Bearer ${token}` },
       });
@@ -226,12 +244,12 @@ export async function POST(req) {
       }
 
       return Response.json({
-        name: lineData.displayName || botConfig.nickname,
-        key: botConfig.bot_id,
-        pictureUrl: lineData.pictureUrl,
-        botConfigId: botConfig.id,
+        name:                 lineData.displayName || botConfig.nickname,
+        key:                  botConfig.bot_id,
+        pictureUrl:           lineData.pictureUrl,
+        botConfigId:          botConfig.id,
         channel_access_token: token,
-        botUserId: lineData.userId || null,
+        botUserId:            lineData.userId || null,
       });
     } catch (error) {
       console.error('[verify_token] Error:', error);
@@ -239,11 +257,12 @@ export async function POST(req) {
     }
   }
 
-  // --------------------------------------------------
+  // ──────────────────────────────────────────────────────────────────
   // action=add_bot
-  // frontend ส่งมา: bot_name, bot_key, channel_token,
+  // อัปเดต bot_config ด้วยข้อมูลจาก LINE (ไม่ insert แถวใหม่)
+  // frontend ส่งมา: bot_name, bot_key (=bot_id), channel_token,
   //                 picture_url, admin_email, bot_user_id
-  // --------------------------------------------------
+  // ──────────────────────────────────────────────────────────────────
   if (action === 'add_bot') {
     try {
       const { bot_name, bot_key, channel_token, picture_url, admin_email, bot_user_id } = await req.json();
@@ -252,92 +271,93 @@ export async function POST(req) {
         return Response.json({ message: 'ข้อมูลไม่ครบ (bot_key, channel_token)' }, { status: 400 });
       }
 
-      // ✅ ดึงข้อมูล Admin จาก admin_system ด้วย email
       const admin      = await getAdminByEmail(admin_email);
-      const adminId    = admin ? admin.admin_id.toString() : (admin_email || 'unknown');
       const adminLabel = adminDisplay(admin, admin_email);
 
-      // ตรวจสอบ token ใน bot_config
+      // ตรวจสอบ channel_access_token ใน bot_config
       const { rows: configCheck } = await query(
-        'SELECT id FROM bot_config WHERE channel_access_token = $1 LIMIT 1', [channel_token]
+        'SELECT id FROM bot_config WHERE channel_access_token = $1 LIMIT 1',
+        [channel_token]
       );
       if (configCheck.length === 0) {
         await saveAuditLog({
           admin, action: 'BOT_ADD_FAILED',
           bot_key, bot_name: bot_name || null,
           detail: `Token ไม่พบในระบบ bot_config | โดย: ${adminLabel}`,
-          ipAddress,
-          userAgent,
+          ipAddress, userAgent,
         });
         return Response.json({ message: 'ไม่พบ Token นี้ในระบบ bot_config กรุณาติดต่อผู้ดูแล' }, { status: 403 });
       }
 
-      // Upsert ลง line_bots (creator_id เก็บ email เพราะ column เป็น VARCHAR)
-      const { rows: upsertRows } = await query(
-        `INSERT INTO line_bots (bot_name, bot_key, channel_token, picture_url, creator_id, bot_user_id, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-         ON CONFLICT (bot_key) DO UPDATE SET
-           bot_name = EXCLUDED.bot_name, channel_token = EXCLUDED.channel_token,
-           picture_url = EXCLUDED.picture_url, bot_user_id = EXCLUDED.bot_user_id,
-           updated_at = CURRENT_TIMESTAMP
-         RETURNING id`,
-        [bot_name || 'บอทใหม่', bot_key, channel_token, picture_url || null, admin_email || 'system', bot_user_id || null]
-      );
-      const lineBotId = upsertRows[0].id;
-
-      // ──────────────────────────────────────────────────────────
-      // เรียก LINE API 2 endpoint พร้อมกัน (parallel) ลด latency
-      // ──────────────────────────────────────────────────────────
       const lineHeaders = { Authorization: `Bearer ${channel_token}` };
+
+      // ดึง bot info + rich menu list พร้อมกัน (parallel)
       const [botInfoRes, lineMenuRes] = await Promise.all([
         bot_user_id
-          ? Promise.resolve(null)   // มี userId แล้ว ไม่ต้องเรียก
+          ? Promise.resolve(null)
           : fetch('https://api.line.me/v2/bot/info', { headers: lineHeaders }),
         fetch('https://api.line.me/v2/bot/richmenu/list', { headers: lineHeaders }),
       ]);
 
-      // อัปเดต bot_user_id ถ้าไม่มีมาตั้งแต่ต้น
-      let resolvedBotUserId = bot_user_id || null;
+      let resolvedBotUserId  = bot_user_id || null;
+      let resolvedPictureUrl = picture_url || null;
+
       if (botInfoRes) {
         try {
-          const botInfo = await botInfoRes.json();
-          resolvedBotUserId = botInfo.userId || null;
-          if (resolvedBotUserId) {
-            await query('UPDATE line_bots SET bot_user_id = $1 WHERE id = $2', [resolvedBotUserId, lineBotId]);
-          }
+          const botInfo      = await botInfoRes.json();
+          resolvedBotUserId  = botInfo.userId       || null;
+          resolvedPictureUrl = resolvedPictureUrl   || botInfo.pictureUrl || null;
         } catch (e) {
-          console.warn('[add_bot] ดึง bot userId ไม่ได้:', e.message);
+          console.warn('[add_bot] ดึง bot info ไม่ได้:', e.message);
         }
       }
 
-      // Batch INSERT rich menus ด้วย query เดียว (ไม่วน loop)
-      const lineData = await lineMenuRes.json();
-      const menus    = lineData.richmenus || [];
-      let syncCount  = 0;
+      // ดึง rich_menus เดิมเพื่อ merge (รักษา image_url)
+      const { rows: existingRows } = await query(
+        'SELECT rich_menus FROM bot_config WHERE bot_id = $1 LIMIT 1',
+        [bot_key]
+      );
+      const existingMenus = Array.isArray(existingRows[0]?.rich_menus) ? existingRows[0].rich_menus : [];
+      const existingMap   = Object.fromEntries(existingMenus.map((m) => [m.richMenuId, m]));
 
-      if (menus.length > 0) {
-        const placeholders = menus.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(', ');
-        const flatValues   = menus.flatMap(m => [lineBotId, m.richMenuId, m.name || 'Imported Menu']);
-        const { rowCount } = await query(
-          `INSERT INTO bot_rich_menus (bot_id, rich_menu_id, menu_name)
-           VALUES ${placeholders}
-           ON CONFLICT (rich_menu_id) DO NOTHING`,
-          flatValues
-        );
-        syncCount = rowCount ?? menus.length;
-      }
+      const lineData  = await lineMenuRes.json();
+      const menus     = lineData.richmenus || [];
+      const syncCount = menus.length;
 
-      // ✅ Log: ใครเพิ่มบอทตัวไหน
+      const mergedMenus = menus.map((m) => ({
+        richMenuId: m.richMenuId,
+        name:       m.name || existingMap[m.richMenuId]?.name || 'Imported Menu',
+        image_url:  existingMap[m.richMenuId]?.image_url || null,
+        is_deleted: false,
+      }));
+
+      // อัปเดต bot_config
+      await query(
+        `UPDATE bot_config SET
+           nickname    = COALESCE($1, nickname),
+           picture_url = COALESCE($2, picture_url),
+           bot_user_id = COALESCE($3, bot_user_id),
+           rich_menus  = $4::jsonb,
+           is_deleted  = false
+         WHERE bot_id = $5`,
+        [
+          bot_name || null,
+          resolvedPictureUrl,
+          resolvedBotUserId,
+          JSON.stringify(mergedMenus),
+          bot_key,
+        ]
+      );
+
       await saveAuditLog({
         admin, action: 'BOT_ADD',
         bot_key, bot_name: bot_name || 'บอทใหม่',
-        detail: `เพิ่มบอทสำเร็จ sync เมนู ${syncCount} รายการ | โดย: ${adminLabel}`,
-        ipAddress,
-        userAgent,
+        detail: `เพิ่ม/อัปเดตบอทสำเร็จ sync เมนู ${syncCount} รายการ | โดย: ${adminLabel}`,
+        ipAddress, userAgent,
       });
 
       return Response.json(
-        { success: true, message: `เพิ่มบอทสำเร็จ และ sync เมนู ${syncCount} รายการ`, data: { id: lineBotId, bot_name, synced: syncCount } },
+        { success: true, message: `เพิ่มบอทสำเร็จ และ sync เมนู ${syncCount} รายการ`, data: { bot_key, bot_name, synced: syncCount } },
         { status: 201 }
       );
     } catch (error) {
@@ -346,45 +366,46 @@ export async function POST(req) {
     }
   }
 
-  // --------------------------------------------------
+  // ──────────────────────────────────────────────────────────────────
   // action=delete_bot
-  // frontend ส่งมา: bot_key, admin_email
-  // --------------------------------------------------
+  // Soft Delete: set is_deleted = true ใน bot_config
+  // frontend ส่งมา: bot_key (=bot_id), admin_email
+  // ──────────────────────────────────────────────────────────────────
   if (action === 'delete_bot') {
     try {
       const { bot_key, admin_email } = await req.json();
       if (!bot_key) return Response.json({ message: 'bot_key is required' }, { status: 400 });
 
-      // ✅ ดึงข้อมูล Admin จาก admin_system ด้วย email
       const admin      = await getAdminByEmail(admin_email);
-      const adminId    = admin ? admin.admin_id.toString() : (admin_email || 'unknown');
       const adminLabel = adminDisplay(admin, admin_email);
 
       const { rows: botRows } = await query(
-        'SELECT id, bot_name FROM line_bots WHERE bot_key = $1 AND is_deleted = false', [bot_key]
+        `SELECT id, nickname FROM bot_config
+         WHERE bot_id = $1 AND (is_deleted = false OR is_deleted IS NULL)
+         LIMIT 1`,
+        [bot_key]
       );
       if (botRows.length === 0) {
         await saveAuditLog({
           admin, action: 'BOT_DELETE_FAILED',
           bot_key, detail: `ไม่พบบอทในระบบ | โดย: ${adminLabel}`,
-          ipAddress,
-          userAgent,
+          ipAddress, userAgent,
         });
         return Response.json({ message: 'ไม่พบบอทในระบบ' }, { status: 404 });
       }
 
-      const botName = botRows[0].bot_name;
+      const botName = botRows[0].nickname;
+
       await query(
-        'UPDATE line_bots SET is_deleted = true, updated_at = CURRENT_TIMESTAMP WHERE bot_key = $1', [bot_key]
+        'UPDATE bot_config SET is_deleted = true WHERE bot_id = $1',
+        [bot_key]
       );
 
-      // ✅ Log: ใครลบบอทตัวไหน
       await saveAuditLog({
         admin, action: 'BOT_DELETE',
         bot_key, bot_name: botName,
         detail: `ลบบอทออกจากระบบ | โดย: ${adminLabel}`,
-        ipAddress,
-        userAgent,
+        ipAddress, userAgent,
       });
 
       return Response.json({ success: true, message: 'ลบบอทสำเร็จ' });
@@ -394,24 +415,30 @@ export async function POST(req) {
     }
   }
 
-  // --------------------------------------------------
+  // ──────────────────────────────────────────────────────────────────
   // action=sync
-  // frontend ส่งมา: botKey, admin_email
-  // --------------------------------------------------
+  // Sync rich menu list จาก LINE → bot_config.rich_menus (JSONB)
+  // เมนูใหม่จาก LINE จะถูก merge; เมนูที่หายไปจาก LINE จะถูก soft delete
+  // frontend ส่งมา: botKey (=bot_id), admin_email
+  // ──────────────────────────────────────────────────────────────────
   if (action === 'sync') {
     try {
       const { botKey, admin_email } = await req.json();
 
       const { rows: botRows } = await query(
-        'SELECT id, bot_name, channel_token FROM line_bots WHERE bot_key = $1', [botKey]
+        `SELECT id, nickname, channel_access_token, rich_menus
+         FROM bot_config
+         WHERE bot_id = $1 AND (is_deleted = false OR is_deleted IS NULL)
+         LIMIT 1`,
+        [botKey]
       );
       if (botRows.length === 0) return Response.json({ error: 'ไม่พบข้อมูลบอทในระบบ' }, { status: 404 });
 
-      const { id: botId, bot_name: botName, channel_token: token } = botRows[0];
+      const bot     = botRows[0];
+      const token   = bot.channel_access_token;
+      const botName = bot.nickname;
 
-      // ✅ ดึงข้อมูล Admin จาก admin_system ด้วย email
       const admin      = await getAdminByEmail(admin_email);
-      const adminId    = admin ? admin.admin_id.toString() : (admin_email || 'system');
       const adminLabel = adminDisplay(admin, admin_email);
 
       const lineRes = await fetch('https://api.line.me/v2/bot/richmenu/list', {
@@ -420,36 +447,45 @@ export async function POST(req) {
       const data = await lineRes.json();
       if (!lineRes.ok) throw new Error(data.message || 'ดึงข้อมูลจาก LINE ล้มเหลว');
 
-      const menus    = data.richmenus || [];
-      let savedCount = 0;
+      const lineMenus = data.richmenus || [];
 
-      if (menus.length > 0) {
-        // Batch INSERT ด้วย query เดียว
-        const placeholders = menus.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(', ');
-        const flatValues   = menus.flatMap(m => [botId, m.richMenuId, m.name || 'Imported Menu']);
-        const insertResult = await query(
-          `INSERT INTO bot_rich_menus (bot_id, rich_menu_id, menu_name)
-           VALUES ${placeholders}
-           ON CONFLICT (rich_menu_id) DO NOTHING`,
-          flatValues
-        );
-        savedCount = insertResult.rowCount ?? 0;
+      // Merge: รักษา image_url เดิม + เพิ่มเมนูใหม่
+      const existingMenus = Array.isArray(bot.rich_menus) ? bot.rich_menus : [];
+      const existingMap   = Object.fromEntries(existingMenus.map((m) => [m.richMenuId, m]));
+      const lineMenuIds   = new Set(lineMenus.map((m) => m.richMenuId));
 
-        // Log รวมครั้งเดียว (ไม่วน loop ต่อเมนู)
-        if (savedCount > 0) {
-          await saveAuditLog({
-            admin, action: 'MENU_SYNCED',
-            bot_key: botKey, bot_name: botName,
-            detail: `Sync เมนูใหม่ ${savedCount} รายการจาก LINE | โดย: ${adminLabel}`,
-            ipAddress,
-            userAgent,
-          });
-        }
+      const activeMenus = lineMenus.map((m) => ({
+        richMenuId: m.richMenuId,
+        name:       m.name || existingMap[m.richMenuId]?.name || 'Imported Menu',
+        image_url:  existingMap[m.richMenuId]?.image_url || null,
+        is_deleted: false,
+      }));
+
+      // เมนูที่หายจาก LINE → soft delete ใน JSONB
+      const orphanMenus = existingMenus
+        .filter((m) => !lineMenuIds.has(m.richMenuId) && !m.is_deleted)
+        .map((m) => ({ ...m, is_deleted: true }));
+
+      const newCount   = lineMenus.filter((m) => !existingMap[m.richMenuId]).length;
+      const finalMenus = [...activeMenus, ...orphanMenus];
+
+      await query(
+        'UPDATE bot_config SET rich_menus = $1::jsonb WHERE bot_id = $2',
+        [JSON.stringify(finalMenus), botKey]
+      );
+
+      if (newCount > 0) {
+        await saveAuditLog({
+          admin, action: 'MENU_SYNCED',
+          bot_key: botKey, bot_name: botName,
+          detail: `Sync เมนูใหม่ ${newCount} รายการจาก LINE | โดย: ${adminLabel}`,
+          ipAddress, userAgent,
+        });
       }
 
       return Response.json({
         success: true,
-        message: `Sync สำเร็จ! พบเมนู ${menus.length} รายการ, บันทึกใหม่ ${savedCount} รายการ`,
+        message: `Sync สำเร็จ! พบเมนู ${lineMenus.length} รายการ, บันทึกใหม่ ${newCount} รายการ`,
       });
     } catch (error) {
       console.error('[sync] Error:', error);
@@ -461,7 +497,7 @@ export async function POST(req) {
 }
 
 // ============================================================
-// Default export — routes by HTTP method (required by index.js vercelAdapter)
+// Default export — routes by HTTP method
 // ============================================================
 export default async function richmenuHandler(req, res) {
   if (req.method === 'GET')  return GET(req, res);
