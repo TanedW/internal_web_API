@@ -249,12 +249,10 @@ export default async function handler(req, res) {
         return res.status(200).json({ currentMenuId, imageUrl });
       } catch (error) {
         console.error("[current]", error);
-        return res
-          .status(500)
-          .json({
-            error: "Failed to fetch current menu",
-            details: error.message,
-          });
+        return res.status(500).json({
+          error: "Failed to fetch current menu",
+          details: error.message,
+        });
       }
     }
 
@@ -320,12 +318,13 @@ export default async function handler(req, res) {
         //   - link เมนูใหม่ให้ทุกคน
         const operations = [];
         if (prevMenuId && prevMenuId !== menuId) {
-          operations.push({ type: "unlink" });
+          // replace: คนที่ใช้เมนูเก่าอยู่ → เปลี่ยนเป็นเมนูใหม่
+          operations.push({ type: "link", from: prevMenuId, to: menuId });
+        } else {
+          // ไม่มีเมนูเก่า → ใช้ unlinkAll แล้ว link ใหม่แยก 2 request
+          // หรือถ้าต้องการ link ให้ทุกคนโดยไม่สนเมนูเดิม ต้องใช้ bulk/link แทน
+          operations.push({ type: "unlinkAll" });
         }
-        operations.push({
-          type: "link",
-          to: { type: "richmenu", richMenuId: menuId },
-        });
 
         const batchRes = await fetch(
           "https://api.line.me/v2/bot/richmenu/batch",
@@ -593,12 +592,10 @@ export default async function handler(req, res) {
             ipAddress,
             userAgent,
           });
-          return res
-            .status(400)
-            .json({
-              error: "Failed to upload image",
-              details: step2.response?.message,
-            });
+          return res.status(400).json({
+            error: "Failed to upload image",
+            details: step2.response?.message,
+          });
         }
 
         // STEP 3: บันทึกลง bot_config.rich_menus JSONB
@@ -770,12 +767,10 @@ export default async function handler(req, res) {
           userAgent,
         });
 
-        return res
-          .status(200)
-          .json({
-            success: true,
-            message: `บันทึก ${savedCount} states สำเร็จ`,
-          });
+        return res.status(200).json({
+          success: true,
+          message: `บันทึก ${savedCount} states สำเร็จ`,
+        });
       } catch (error) {
         console.error("[save_flow]", error);
         return res.status(500).json({ error: error.message });
