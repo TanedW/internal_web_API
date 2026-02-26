@@ -187,7 +187,8 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
 
     // ── current ──────────────────────────────────────────────
-    // ดึง active menu จาก DB (active_rich_menu_id) — ไม่เรียก LINE API
+    // ดึง active_rich_menu_id จาก DB ก่อน (เร็ว)
+    // ถ้ายังเป็น NULL → fallback เรียก LINE API แล้ว sync ค่ากลับ DB
     if (action === "current") {
       try {
         const botKey = req.query.botKey;
@@ -196,7 +197,29 @@ export default async function handler(req, res) {
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
 
-        const currentMenuId = bot.active_rich_menu_id || null;
+        let currentMenuId = bot.active_rich_menu_id || null;
+
+        // Fallback: ดึงจาก LINE API เมื่อ DB ยังไม่มีค่า (เช่น บอทเพิ่งเพิ่มเข้าระบบ)
+        if (!currentMenuId) {
+          try {
+            const lineRes = await fetch("https://api.line.me/v2/bot/user/all/richmenu", {
+              headers: { Authorization: `Bearer ${bot.channel_access_token}` },
+            });
+            if (lineRes.ok) {
+              const lineData = await lineRes.json();
+              currentMenuId = lineData.richMenuId || null;
+              // sync ค่ากลับ DB เพื่อครั้งต่อไปจะได้ไม่ต้องเรียก LINE อีก
+              if (currentMenuId) {
+                await query(
+                  "UPDATE bot_config SET active_rich_menu_id = $1 WHERE bot_id = $2",
+                  [currentMenuId, botKey]
+                );
+              }
+            }
+          } catch (e) {
+            console.warn("[current] LINE API fallback failed:", e.message);
+          }
+        }
 
         let imageUrl = null;
         if (currentMenuId) {
