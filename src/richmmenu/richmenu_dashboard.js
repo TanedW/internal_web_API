@@ -128,8 +128,8 @@ function getRequestMeta(req) {
 async function getTokenFromDB(botKey) {
   const { rows } = await query(
     `SELECT channel_access_token FROM bot_config
-     WHERE bot_id = $1 OR id::text = $1
-     AND (is_deleted = false OR is_deleted IS NULL)
+     WHERE (bot_id = $1 OR id::text = $1)
+     AND richmenu_enabled = true
      LIMIT 1`,
     [String(botKey)],
   );
@@ -146,7 +146,7 @@ async function getBotConfig(botKey) {
     `SELECT id, nickname, bot_id, channel_access_token,
             bot_user_id, active_rich_menu_id, rich_menus
      FROM bot_config
-     WHERE bot_id = $1 AND (is_deleted = false OR is_deleted IS NULL)
+     WHERE bot_id = $1 AND richmenu_enabled = true
      LIMIT 1`,
     [String(botKey)],
   );
@@ -584,8 +584,8 @@ export default async function handler(req, res) {
         // ดึง bot_user_id จาก bot_config
         const { rows: botRows } = await query(
           `SELECT bot_user_id, nickname FROM bot_config
-           WHERE bot_id = $1 OR id::text = $1
-           AND (is_deleted = false OR is_deleted IS NULL)
+           WHERE (bot_id = $1 OR id::text = $1)
+           AND richmenu_enabled = true
            LIMIT 1`,
           [String(botKey)],
         );
