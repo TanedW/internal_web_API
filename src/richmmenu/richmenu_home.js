@@ -152,8 +152,7 @@ export async function GET(req) {
 
   // ──────────────────────────────────────────────────────────────────
   // action=current
-  // ดึง active menu จาก LINE API
-  // หา image_url จาก bot_config.rich_menus JSONB
+  // ดึง active_rich_menu_id จาก DB โดยตรง — ไม่เรียก LINE API
   // ──────────────────────────────────────────────────────────────────
   if (action === 'current') {
     try {
@@ -161,7 +160,7 @@ export async function GET(req) {
       if (!botKey) return Response.json({ error: 'botKey is required' }, { status: 400 });
 
       const { rows: botRows } = await query(
-        `SELECT channel_access_token, active_rich_menu_id, rich_menus
+        `SELECT active_rich_menu_id, rich_menus
          FROM bot_config
          WHERE bot_id = $1 AND richmenu_enabled = true
          LIMIT 1`,
@@ -169,21 +168,14 @@ export async function GET(req) {
       );
       if (botRows.length === 0) return Response.json({ error: 'Bot not found' }, { status: 404 });
 
-      const bot   = botRows[0];
-      const token = bot.channel_access_token;
-
-      // เรียก LINE API เพื่อดู default rich menu ปัจจุบัน
-      const lineRes = await fetch('https://api.line.me/v2/bot/user/all/richmenu', {
-        method: 'GET', headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await lineRes.json();
-      const currentMenuId = lineRes.ok ? (data.richMenuId || null) : null;
+      const bot           = botRows[0];
+      const currentMenuId = bot.active_rich_menu_id || null;
 
       // หา image_url จาก rich_menus JSONB
       let imageUrl = null;
       if (currentMenuId) {
-        const richMenus = Array.isArray(bot.rich_menus) ? bot.rich_menus : [];
-        const found     = richMenus.find((m) => m.richMenuId === currentMenuId);
+        const richMenus     = Array.isArray(bot.rich_menus) ? bot.rich_menus : [];
+        const found         = richMenus.find((m) => m.richMenuId === currentMenuId);
         const backendOrigin = new URL(req.url).origin;
 
         if (found?.image_url?.startsWith('http')) {
@@ -191,7 +183,6 @@ export async function GET(req) {
         } else if (found?.image_url) {
           imageUrl = `${backendOrigin}${found.image_url}`;
         } else {
-          // fallback: proxy image จาก LINE
           imageUrl = `${backendOrigin}/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`;
         }
       }
