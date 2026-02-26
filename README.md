@@ -13,12 +13,15 @@ graph TD
         B[Cases]
         C[Flex Messages]
         D[Organizations]
+        E[Rich Menu]
+        F[Audit Logs]
     end
 
     subgraph "Core Services"
-        Auth[Authentication]
+        Auth[Authentication/Session]
         DB[Database]
         Permit[Authorization]
+        LINE[LINE API]
     end
 
     A --> Auth
@@ -27,12 +30,17 @@ graph TD
     B --> DB
     C --> DB
     D --> DB
+    E --> LINE
+    E --> DB
+    F --> DB
 ```
 
 -   **Admin:** Manages admin users, roles, and authentication.
 -   **Cases:** Handles case creation, retrieval, and updates.
--   **Flex Messages:** Manages LINE Flex Messages.
--   **Organizations:** Manages organization data.
+-   **Flex Messages:** Manages LINE Flex Messages and validation.
+-   **Organizations:** Manages organization data and proxy search.
+-   **Rich Menu:** Comprehensive management of LINE Rich Menus and bots.
+-   **Audit Logs:** Tracking system activities and admin actions.
 
 ## Database Schema
 
@@ -121,11 +129,13 @@ erDiagram
     voice_message ||--|{ voice_message_photos : "has"
     voice_attachment ||--|{ voice_message_photos : "is"
     voice_fonduegroup ||--o{ voice_codeclaimadmingroup : "has"
+    line_bots ||--o{ bot_rich_menus : "has"
+    line_bots ||--o{ audit_logs : "has"
 ```
 
 ## API Endpoints
 
-### Admin Authentication
+### Admin Authentication & Session
 
 #### `POST /api/AdminLogin`
 
@@ -164,6 +174,28 @@ sequenceDiagram
     -   `403 Forbidden`: The email is not authorized.
     -   `500 Internal Server Error`: An error occurred.
 
+#### `POST /api/CheckSession`
+
+Verifies if an admin session is still valid.
+
+-   **Request Body:**
+    -   `email` (string, required): Admin email.
+    -   `access_token` (string, required): Current access token.
+-   **Responses:**
+    -   `200 OK`: Authenticated successfully.
+    -   `401 Unauthorized`: Session mismatch or expired.
+    -   `403 Forbidden`: Account deactivated.
+    -   `404 Not Found`: User not found.
+
+#### `GET /api/GetUserRoles`
+
+Retrieves the roles assigned to the current user from Permit.io.
+
+-   **Headers:** Requires `access_token` in cookies.
+-   **Responses:**
+    -   `200 OK`: Returns roles and validity status.
+    -   `401 Unauthorized`: No token or invalid session.
+
 ### Admin Management
 
 #### `GET /api/AdminList`
@@ -194,102 +226,25 @@ sequenceDiagram
 
 Creates a new admin or reactivates a deleted one.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
-    participant Permit
-
-    Client->>API: POST /api/AdminList (current_admin_id, email, role)
-    API->>Database: SELECT * FROM admin_system WHERE email = ?
-    alt User exists
-        Database-->>API: User data
-        alt User is deleted
-            API->>Database: UPDATE admin_system SET is_deleted = false WHERE email = ?
-            Database-->>API: Reactivated user data
-        end
-    else User does not exist
-        Database-->>API: Not found
-        API->>Database: INSERT INTO admin_system (email) VALUES (?)
-        Database-->>API: New user data
-    end
-    API->>Permit: Sync user and assign role
-    Permit-->>API: Success
-    API-->>Client: 200 OK (User data)
-```
-
--   **Request Body:**
-    -   `current_admin_id` (integer, required): The ID of the admin performing the action.
-    -   `email` (string, required): The new admin's email.
-    -   `role` (string, required): The role to assign to the admin.
--   **Responses:**
-    -   `200 OK`: The admin was created or updated successfully.
-    -   `400 Bad Request`: Missing required fields.
-
 #### `PUT /api/AdminList?id=<admin_id>`
 
 Updates an admin's information.
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
-
-    Client->>API: PUT /api/AdminList?id=<admin_id> (current_admin_id, email, first_name, last_name)
-    API->>Database: UPDATE admin_system SET ... WHERE admin_id = ?
-    Database-->>API: Updated user data
-    API-->>Client: 200 OK (Updated user data)
-```
-
--   **URL Parameters:**
-    -   `id` (integer, required): The ID of the admin to update.
--   **Request Body:**
-    -   `current_admin_id` (integer, required): The ID of the admin performing the action.
-    -   `email` (string): The admin's new email.
-    -   `first_name` (string): The admin's new first name.
-    -   `last_name` (string): The admin's new last name.
--   **Responses:**
-    -   `200 OK`: The admin was updated successfully. Returns the updated admin's data.
-    -   `400 Bad Request`: Missing admin ID.
-    -   `404 Not Found`: The admin was not found.
 
 #### `DELETE /api/AdminList?id=<admin_id>`
 
 Soft deletes an admin.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
-    participant Permit
+#### `GET /api/GetAuditLogs`
 
-    Client->>API: DELETE /api/AdminList?id=<admin_id> (current_admin_id)
-    API->>Permit: Check permission for current_admin_id to delete Admin_Users
-    alt Permitted
-        Permit-->>API: true
-        API->>Database: UPDATE admin_system SET is_deleted = true WHERE admin_id = ?
-        Database-->>API: Success
-        API->>Permit: Delete user from Permit
-        Permit-->>API: Success
-        API-->>Client: 200 OK (Deactivated successfully)
-    else Not Permitted
-        Permit-->>API: false
-        API-->>Client: 403 Forbidden
-    end
-```
+Retrieves system audit logs from Google Cloud Logging.
 
 -   **URL Parameters:**
-    -   `id` (integer, required): The ID of the admin to delete.
--   **Request Body:**
-    -   `current_admin_id` (integer, required): The ID of the admin performing the action.
+    -   `limit` (integer): Number of logs to return.
+    -   `actionType` (string): Filter by action.
+    -   `email` (string): Filter by admin email.
+    -   `status` (string): Filter by status (SUCCESS/FAILED).
 -   **Responses:**
-    -   `200 OK`: The admin was deactivated successfully.
-    -   `400 Bad Request`: Missing admin ID.
-    -   `403 Forbidden`: The acting admin does not have permission to delete.
-    -   `404 Not Found`: The admin was not found.
+    -   `200 OK`: Returns a list of log entries.
 
 ### Case Management
 
@@ -297,59 +252,9 @@ sequenceDiagram
 
 Searches for a case and its associated media.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
-
-    Client->>API: GET /api/cases/search_case?id=<ticket_id>
-    API->>Database: SELECT * FROM voice_message WHERE ticket_id = ?
-    Database-->>API: Case data
-    API->>Database: SELECT * FROM voice_attachment WHERE message_id = ?
-    Database-->>API: Timeline data
-    API-->>Client: 200 OK (Case data with timeline)
-```
-
--   **URL Parameters:**
-    -   `id` (string, required): The `ticket_id` to search for.
--   **Responses:**
-    -   `200 OK`: Returns the case data, including an array of media files.
-    -   `400 Bad Request`: Missing case ID.
-    -   `404 Not Found`: The case was not found.
-
 #### `PUT /api/cases/manage_case?id=<case_id>`
 
 Updates a media item's URL within a case.
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
-
-    Client->>API: PUT /api/cases/manage_case?id=<case_id> (current_admin_id, photo_id, file_url, ...)
-    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
-    Database-->>API: Admin data
-    API->>Database: UPDATE voice_attachment SET photo = ?, ... WHERE id = ?
-    Database-->>API: Updated media data
-    API->>Database: INSERT INTO admin_system_logs (...)
-    API-->>Client: 200 OK (Success)
-```
-
--   **URL Parameters:**
-    -   `id` (string, required): The `case_id` of the case to update.
--   **Request Body:**
-    -   `current_admin_id` (integer, required): The ID of the admin performing the action.
-    -   `photo_id` (string, required): The ID of the photo to update.
-    -   `file_url` (string, required): The new URL for the media item.
-    -   `description` (string): A description of the change.
-    -   `viewed` (integer): The viewed status of the media.
-    -   `old_url` (string): The old URL of the media item.
--   **Responses:**
-    -   `200 OK`: The update was successful.
-    -   `400 Bad Request`: Missing required fields.
-    -   `404 Not Found`: The photo ID was not found or mismatched.
 
 ### Flex Message Management
 
@@ -357,109 +262,14 @@ sequenceDiagram
 
 Retrieves all Flex Messages.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
+#### `POST /api/flex_message/validate-push`
 
-    Client->>API: GET /api/flex_message/manage_flex_message
-    API->>Database: SELECT * FROM flex_message WHERE is_deleted = false
-    Database-->>API: List of Flex Messages
-    API-->>Client: 200 OK (List of Flex Messages)
-```
+Validates Flex Message JSON structure using LINE's validation API.
 
+-   **Request Body:** Flex Message JSON content.
 -   **Responses:**
-    -   `200 OK`: Returns an array of Flex Message objects.
-
-#### `POST /api/flex_message/manage_flex_message`
-
-Creates a new Flex Message.
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
-
-    Client->>API: POST /api/flex_message/manage_flex_message (current_admin_id, flex_name, ...)
-    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
-    Database-->>API: Admin data
-    API->>Database: INSERT INTO flex_message (...) VALUES (...)
-    Database-->>API: New Flex Message data
-    API->>Database: INSERT INTO admin_system_logs (...)
-    API-->>Client: 201 Created (New Flex Message data)
-```
-
--   **Request Body:**
-    -   `current_admin_id` (integer, required): The ID of the admin performing the action.
-    -   `flex_name` (string, required): The name of the Flex Message.
-    -   `flex_data` (json, required): The Flex Message data.
-    -   `comment` (string): A comment for the Flex Message.
-    -   `quick_reply` (json): Quick reply data.
--   **Responses:**
-    -   `201 Created`: The Flex Message was created successfully.
-    -   `403 Forbidden`: Unauthorized.
-
-#### `PUT /api/flex_message/manage_flex_message?id=<flex_id>`
-
-Updates a Flex Message.
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
-
-    Client->>API: PUT /api/flex_message/manage_flex_message?id=<flex_id> (current_admin_id, flex_name, ...)
-    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
-    Database-->>API: Admin data
-    API->>Database: UPDATE flex_message SET ... WHERE id = ?
-    Database-->>API: Updated Flex Message data
-    API->>Database: INSERT INTO admin_system_logs (...)
-    API-->>Client: 200 OK (Updated Flex Message data)
-```
-
--   **URL Parameters:**
-    -   `id` (integer, required): The ID of the Flex Message to update.
--   **Request Body:**
-    -   `current_admin_id` (integer, required): The ID of the admin performing the action.
-    -   `flex_name` (string): The new name of the Flex Message.
-    -   `flex_data` (json): The new Flex Message data.
-    -   `comment` (string): The new comment.
-    -   `quick_reply` (json): The new quick reply data.
--   **Responses:**
-    -   `200 OK`: The Flex Message was updated successfully.
-    -   `400 Bad Request`: Missing Flex Message ID.
-    -   `404 Not Found`: The Flex Message was not found.
-
-#### `DELETE /api/flex_message/manage_flex_message?id=<flex_id>`
-
-Soft deletes a Flex Message.
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
-
-    Client->>API: DELETE /api/flex_message/manage_flex_message?id=<flex_id> (current_admin_id)
-    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
-    Database-->>API: Admin data
-    API->>Database: UPDATE flex_message SET is_deleted = true WHERE id = ?
-    Database-->>API: Success
-    API->>Database: INSERT INTO admin_system_logs (...)
-    API-->>Client: 200 OK (Deleted successfully)
-```
-
--   **URL Parameters:**
-    -   `id` (integer, required): The ID of the Flex Message to delete.
--   **Request Body:**
-    -   `current_admin_id` (integer, required): The ID of the admin performing the action.
--   **Responses:**
-    -   `200 OK`: The Flex Message was deleted successfully.
-    -   `403 Forbidden`: Unauthorized.
-    -   `404 Not Found`: The Flex Message was not found.
+    -   `200 OK`: Validation passed.
+    -   `400 Bad Request`: Validation failed with details from LINE.
 
 ### Organization Management
 
@@ -467,90 +277,51 @@ sequenceDiagram
 
 Searches for an organization by ID or name.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
+#### `GET /api/proxy-search-org/search-org?search=<query>`
 
-    Client->>API: GET /api/organization/search_org?q=<query>
-    API->>Database: SELECT * FROM voice_fonduegroup WHERE id = ? OR name ILIKE ?
-    Database-->>API: List of organizations
-    API-->>Client: 200 OK (List of organizations)
-```
+Proxies organization search requests to an external PHP backend.
 
 -   **URL Parameters:**
-    -   `q` (string, required): The ID or name to search for.
+    -   `search` (string, required): Search term.
+    -   `limit` (integer): Max results.
 -   **Responses:**
-    -   `200 OK`: Returns an array of matching organization objects.
-    -   `400 Bad Request`: Missing search query.
-    -   `404 Not Found`: No organizations found.
+    -   `200 OK`: Returns search results from proxy.
 
-#### `PUT /api/organization/manage_org?id=<group_id>`
+### Rich Menu Management
 
-Updates or restores an organization.
+#### `GET /api/richmmenu/richmenu_home`
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
+Manages bot registrations and high-level rich menu synchronization.
+-   **Actions (`?action=...`):**
+    -   `list_bots`: List all registered LINE bots.
+    -   `current`: Get the active rich menu for a bot.
 
-    Client->>API: PUT /api/organization/manage_org?id=<group_id> (current_admin_id, name, ...)
-    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
-    Database-->>API: Admin data
-    API->>Database: UPDATE voice_fonduegroup SET ... WHERE id = ?
-    Database-->>API: Updated organization data
-    API->>Database: INSERT INTO admin_system_logs (...)
-    API-->>Client: 200 OK (Updated organization data)
-```
+#### `POST /api/richmmenu/richmenu_home`
 
--   **URL Parameters:**
-    -   `id` (integer, required): The ID of the organization to update.
--   **Request Body:**
-    -   `current_admin_id` (integer, required): The ID of the admin performing the action.
-    -   `name` (string): The new name of the organization.
-    -   `file_url` (string): The new photo URL for the organization.
-    -   `description` (string): A description of the changes.
-    -   `official_group` (boolean): Whether the organization is an official group.
-    -   `download_csv` (boolean): Whether CSV download is enabled.
-    -   `restore` (boolean): Set to `true` to restore a soft-deleted organization.
-    -   `old_name` (string): The previous name of the organization.
-    -   `old_url` (string): The previous photo URL.
-    -   `old_official` (boolean): The previous official group status.
-    -   `old_download` (boolean): The previous CSV download status.
--   **Responses:**
-    -   `200 OK`: The organization was updated successfully.
-    -   `400 Bad Request`: Missing description for restore.
-    -   `403 Forbidden`: Unauthorized.
-    -   `404 Not Found`: The organization was not found.
+-   **Actions (`?action=...`):**
+    -   `verify_token`: Validate a LINE Channel Access Token.
+    -   `add_bot`: Register a new bot.
+    -   `delete_bot`: Soft-delete a bot.
+    -   `sync`: Sync rich menus from LINE to the local database.
 
-#### `DELETE /api/organization/manage_org?id=<group_id>`
+#### `GET /api/richmmenu/richmenu_dashboard`
 
-Soft deletes an organization.
+Detailed rich menu operations and assets.
+-   **Actions (`?action=...`):**
+    -   `list`: List all menus for a specific bot.
+    -   `details`: Get JSON structure of a rich menu.
+    -   `image`: Proxy/retrieve the rich menu image.
+    -   `audit_logs`: Get bot-specific activity logs.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API
-    participant Database
+#### `POST /api/richmmenu/richmenu_dashboard`
 
-    Client->>API: DELETE /api/organization/manage_org?id=<group_id> (current_admin_id, description)
-    API->>Database: SELECT * FROM admin_system WHERE admin_id = ?
-    Database-->>API: Admin data
-    API->>Database: UPDATE voice_fonduegroup SET deleted_at = NOW() WHERE id = ?
-    Database-->>API: Success
-    API->>Database: INSERT INTO admin_system_logs (...)
-    API-->>Client: 200 OK (Deleted successfully)
-```
+-   **Actions (`?action=...`):**
+    -   `upload`: Create a new rich menu and upload its image.
+    -   `save_flow`: Save state machine/interaction flow for a rich menu.
+    -   `delete`: Soft-delete a rich menu.
 
--   **URL Parameters:**
-    -   `id` (integer, required): The ID of the organization to delete.
--   **Request Body:**
-    -   `current_admin_id` (integer, required): The ID of the admin performing the action.
-    -   `description` (string, required): A reason for the deletion.
--   **Responses:**
-    -   `200 OK`: The organization was deleted successfully.
-    -   `400 Bad Request`: Missing description.
-    -   `403 Forbidden`: Unauthorized.
-    -   `404 Not Found`: The organization was not found.
+## Core Utilities (`/src/lib`)
+
+-   **`db.js`**: PostgreSQL connection pooling and query execution.
+-   **`lineApi.js`**: Helper for making authenticated requests to LINE Messaging API.
+-   **`logging.js`**: Centralized logging utility for system and audit events.
