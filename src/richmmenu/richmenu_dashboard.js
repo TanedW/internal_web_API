@@ -187,7 +187,7 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
 
     // ── current ──────────────────────────────────────────────
-    // ดึง active menu จาก LINE + หา image_url จาก bot_config.rich_menus
+    // ดึง active menu จาก DB (active_rich_menu_id) — ไม่เรียก LINE API
     if (action === "current") {
       try {
         const botKey = req.query.botKey;
@@ -196,11 +196,7 @@ export default async function handler(req, res) {
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
 
-        const lineRes = await fetch("https://api.line.me/v2/bot/user/all/richmenu", {
-          headers: { Authorization: `Bearer ${bot.channel_access_token}` },
-        });
-        const data = await lineRes.json();
-        const currentMenuId = lineRes.ok ? data.richMenuId || null : null;
+        const currentMenuId = bot.active_rich_menu_id || null;
 
         let imageUrl = null;
         if (currentMenuId) {
@@ -228,42 +224,18 @@ export default async function handler(req, res) {
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
 
-        // ดึงรายการเมนูจาก LINE API
-        const lineRes = await fetch("https://api.line.me/v2/bot/richmenu/list", {
-          headers: { Authorization: `Bearer ${bot.channel_access_token}` },
-        });
-        const lineData  = await lineRes.json();
-        const lineMenus = lineData.richmenus || [];
-
-        // Auto sync: merge เมนูจาก LINE เข้า rich_menus JSONB
+        // ดึงจาก DB ก่อน (เร็ว) — ไม่ sync LINE ทุกครั้ง
+        // ถ้าต้องการ sync ให้กดปุ่ม sync แยกต่างหาก
         const existingMenus = Array.isArray(bot.rich_menus) ? bot.rich_menus : [];
-        const existingMap   = Object.fromEntries(existingMenus.map((m) => [m.richMenuId, m]));
-        const lineMenuIds   = new Set(lineMenus.map((m) => m.richMenuId));
 
-        const activeMenus = lineMenus.map((m) => ({
-          richMenuId: m.richMenuId,
-          name:       m.name || existingMap[m.richMenuId]?.name || "Legacy Menu",
-          image_url:  existingMap[m.richMenuId]?.image_url || null,
-          is_deleted: false,
-        }));
-
-        // เมนูที่หายไปจาก LINE → soft delete ใน JSONB
-        const orphanMenus = existingMenus
-          .filter((m) => !lineMenuIds.has(m.richMenuId) && !m.is_deleted)
-          .map((m) => ({ ...m, is_deleted: true }));
-
-        const finalMenus = [...activeMenus, ...orphanMenus];
-        await updateRichMenus(botKey, finalMenus);
-
-        // คืนเฉพาะที่ไม่ถูก soft delete
-        const visibleMenus = finalMenus
+        const visibleMenus = existingMenus
           .filter((m) => !m.is_deleted)
           .map((m) => ({
             richMenuId: m.richMenuId,
             name:       m.name,
             image_url:  m.image_url,
             is_active:  m.richMenuId === bot.active_rich_menu_id,
-            created_at: null, // ไม่มีใน JSONB; frontend ไม่ได้ใช้
+            created_at: null,
           }));
 
         return res.status(200).json({ richmenus: visibleMenus });
