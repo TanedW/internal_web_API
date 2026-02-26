@@ -326,18 +326,19 @@ export async function POST(req) {
       }));
 
       // อัปเดต bot_config + เปิด richmenu_enabled
+      // ใช้ channel_access_token เป็น key เพื่อป้องกัน UPDATE ผิดแถว
+      // (bot_id อาจซ้ำกันในตาราง แต่ token ไม่ซ้ำ)
+      // ไม่แตะ nickname — ให้ใช้ค่าที่มีอยู่ใน bot_config เดิม
       await query(
         `UPDATE bot_config SET
-           nickname         = COALESCE($1, nickname),
-           picture_url      = COALESCE($2, picture_url),
-           rich_menus       = $3::jsonb,
+           picture_url      = COALESCE($1, picture_url),
+           rich_menus       = $2::jsonb,
            richmenu_enabled = true
-         WHERE bot_id = $4`,
+         WHERE channel_access_token = $3`,
         [
-          bot_name || null,
           resolvedPictureUrl,
           JSON.stringify(mergedMenus),
-          bot_key,
+          channel_token,
         ]
       );
 
