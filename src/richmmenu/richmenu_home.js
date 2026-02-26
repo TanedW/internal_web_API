@@ -2,11 +2,11 @@
 // API ROUTE — สำหรับหน้า richmenu-home (page.jsx) เท่านั้น
 //
 // Actions ที่รองรับ:
-//   GET  ?action=list_bots          → ดึงรายการบอททั้งหมดจาก bot_config
+//   GET  ?action=list_bots          → ดึงรายการบอทที่ richmenu_enabled = true
 //   GET  ?action=current&botKey=... → ดึงเมนูที่ active + imageUrl
 //   POST ?action=verify_token       → ตรวจสอบ Channel Access Token
-//   POST ?action=add_bot            → อัปเดตข้อมูลบอทใน bot_config
-//   POST ?action=delete_bot         → Soft Delete บอท (is_deleted = true)
+//   POST ?action=add_bot            → set richmenu_enabled = true + sync เมนู
+//   POST ?action=delete_bot         → set richmenu_enabled = false (ซ่อนออกจากหน้า)
 //   POST ?action=sync               → Sync Rich Menu จาก LINE → bot_config.rich_menus
 //
 // ⚠️  ไม่ใช้ตาราง line_bots และ bot_rich_menus แล้ว
@@ -14,7 +14,7 @@
 //
 // Columns ที่ใช้ใน bot_config:
 //   id, nickname, bot_id (ใช้แทน bot_key), channel_access_token,
-//   picture_url, bot_user_id, is_deleted,
+//   picture_url, richmenu_enabled,
 //   active_rich_menu_id, rich_menus (JSONB array ของ rich menu)
 //
 // โครงสร้างแต่ละ element ใน rich_menus JSONB:
@@ -128,14 +128,14 @@ export async function GET(req) {
 
   // ──────────────────────────────────────────────────────────────────
   // action=list_bots
-  // ดึงรายการบอทจาก bot_config (เฉพาะที่ไม่ถูก soft delete)
+  // ดึงเฉพาะบอทที่ถูกเพิ่มเข้าระบบ richmenu แล้ว (richmenu_enabled = true)
   // ──────────────────────────────────────────────────────────────────
   if (action === 'list_bots') {
     try {
       const { rows } = await query(
         `SELECT id, nickname, bot_id, picture_url
          FROM bot_config
-         WHERE is_deleted = false OR is_deleted IS NULL
+         WHERE richmenu_enabled = true
          ORDER BY id DESC`
       );
       return Response.json(rows.map((row) => ({
@@ -163,7 +163,7 @@ export async function GET(req) {
       const { rows: botRows } = await query(
         `SELECT channel_access_token, active_rich_menu_id, rich_menus
          FROM bot_config
-         WHERE bot_id = $1 AND (is_deleted = false OR is_deleted IS NULL)
+         WHERE bot_id = $1 AND richmenu_enabled = true
          LIMIT 1`,
         [botKey]
       );
@@ -331,14 +331,14 @@ export async function POST(req) {
         is_deleted: false,
       }));
 
-      // อัปเดต bot_config
+      // อัปเดต bot_config + เปิด richmenu_enabled
       await query(
         `UPDATE bot_config SET
-           nickname    = COALESCE($1, nickname),
-           picture_url = COALESCE($2, picture_url),
-           bot_user_id = COALESCE($3, bot_user_id),
-           rich_menus  = $4::jsonb,
-           is_deleted  = false
+           nickname         = COALESCE($1, nickname),
+           picture_url      = COALESCE($2, picture_url),
+           bot_user_id      = COALESCE($3, bot_user_id),
+           rich_menus       = $4::jsonb,
+           richmenu_enabled = true
          WHERE bot_id = $5`,
         [
           bot_name || null,
@@ -368,7 +368,8 @@ export async function POST(req) {
 
   // ──────────────────────────────────────────────────────────────────
   // action=delete_bot
-  // Soft Delete: set is_deleted = true ใน bot_config
+  // เอาบอทออกจากหน้า richmenu: set richmenu_enabled = false
+  // (บอทยังอยู่ใน bot_config ตามปกติ แค่ไม่แสดงในหน้านี้)
   // frontend ส่งมา: bot_key (=bot_id), admin_email
   // ──────────────────────────────────────────────────────────────────
   if (action === 'delete_bot') {
@@ -381,7 +382,7 @@ export async function POST(req) {
 
       const { rows: botRows } = await query(
         `SELECT id, nickname FROM bot_config
-         WHERE bot_id = $1 AND (is_deleted = false OR is_deleted IS NULL)
+         WHERE bot_id = $1 AND richmenu_enabled = true
          LIMIT 1`,
         [bot_key]
       );
@@ -397,7 +398,7 @@ export async function POST(req) {
       const botName = botRows[0].nickname;
 
       await query(
-        'UPDATE bot_config SET is_deleted = true WHERE bot_id = $1',
+        'UPDATE bot_config SET richmenu_enabled = false WHERE bot_id = $1',
         [bot_key]
       );
 
@@ -428,7 +429,7 @@ export async function POST(req) {
       const { rows: botRows } = await query(
         `SELECT id, nickname, channel_access_token, rich_menus
          FROM bot_config
-         WHERE bot_id = $1 AND (is_deleted = false OR is_deleted IS NULL)
+         WHERE bot_id = $1 AND richmenu_enabled = true
          LIMIT 1`,
         [botKey]
       );
