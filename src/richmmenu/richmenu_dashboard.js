@@ -312,47 +312,52 @@ export default async function handler(req, res) {
         const token = bot.channel_access_token;
         const prevMenuId = bot.active_rich_menu_id || null;
 
-        // STEP 1: ส่ง batch operations
-        //   - unlink ทุกคนออกจากเมนูเก่า (ถ้ามี)
-        //   - link เมนูใหม่ให้ทุกคน
-        const operations = [];
-        if (prevMenuId && prevMenuId !== menuId) {
-          // replace: คนที่ใช้เมนูเก่าอยู่ → เปลี่ยนเป็นเมนูใหม่
-          operations.push({ type: "link", from: prevMenuId, to: menuId });
-        } else {
-          // ไม่มีเมนูเก่า → ใช้ unlinkAll แล้ว link ใหม่แยก 2 request
-          // หรือถ้าต้องการ link ให้ทุกคนโดยไม่สนเมนูเดิม ต้องใช้ bulk/link แทน
-          operations.push({ type: "unlinkAll" });
-        }
-
-        const batchRes = await fetch(
-          "https://api.line.me/v2/bot/richmenu/batch",
+        // STEP 1: set default ก่อน (ไม่มี rate limit)
+        const setDefaultRes = await fetch(
+          `https://api.line.me/v2/bot/user/all/richmenu/${menuId}`,
           {
             method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ operations }),
+            headers: { Authorization: `Bearer ${token}` },
           },
         );
 
-        if (!batchRes.ok) {
-          const errorData = await batchRes.json();
-          const switchAdminFail = await getAdminByEmail(adminId);
+        if (!setDefaultRes.ok) {
+          const errorData = await setDefaultRes.json();
           await saveAuditLog({
-            admin: switchAdminFail,
+            admin: await getAdminByEmail(adminId),
             action: "MENU_SWITCH_FAILED",
             bot_key: botKey,
             bot_name: bot.nickname || null,
             menu_id_to: menuId,
-            detail: `เปลี่ยนเมนูล้มเหลว (batch): ${errorData.message || JSON.stringify(errorData)}`,
+            detail: `เปลี่ยนเมนูล้มเหลว: ${errorData.message}`,
             ipAddress,
             userAgent,
           });
           return res
-            .status(batchRes.status)
+            .status(setDefaultRes.status)
             .json({ error: errorData.message || "Failed to switch menu" });
+        }
+
+        // STEP 2: batch เฉพาะเมื่อมีเมนูเก่า
+        if (prevMenuId && prevMenuId !== menuId) {
+          const batchRes = await fetch(
+            "https://api.line.me/v2/bot/richmenu/batch",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                operations: [{ type: "link", from: prevMenuId, to: menuId }],
+              }),
+            },
+          );
+          if (!batchRes.ok) {
+            console.warn(
+              "[switch] batch rate limited, default menu was set successfully",
+            );
+          }
         }
 
         // STEP 2: อัปเดต active_rich_menu_id ใน DB
