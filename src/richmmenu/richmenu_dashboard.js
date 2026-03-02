@@ -362,7 +362,7 @@ export default async function handler(req, res) {
 
         // STEP 2: อัปเดต active_rich_menu_id ใน DB
         await query(
-          "UPDATE bot_config SET active_rich_menu_id = $1 WHERE bot_id = $2",
+          "UPDATE bot_config SET active_rich_menu_id = $1 WHERE id = $2",
           [menuId, botKey],
         );
 
