@@ -139,8 +139,7 @@ function getRequestMeta(req) {
 async function getTokenFromDB(botKey) {
   const { rows } = await query(
     `SELECT channel_access_token FROM bot_config
-     WHERE (bot_id = $1 OR id::text = $1)
-     AND richmenu_enabled = true
+     WHERE id = $1 AND richmenu_enabled = true
      LIMIT 1`,
     [String(botKey)],
   );
@@ -157,7 +156,7 @@ async function getBotConfig(botKey) {
     `SELECT id, nickname, bot_id, channel_access_token,
             active_rich_menu_id, rich_menus
      FROM bot_config
-     WHERE bot_id = $1 AND richmenu_enabled = true
+     WHERE id = $1 AND richmenu_enabled = true  -- ใช้ id แทน bot_id
      LIMIT 1`,
     [String(botKey)],
   );
