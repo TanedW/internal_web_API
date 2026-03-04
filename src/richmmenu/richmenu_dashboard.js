@@ -141,19 +141,31 @@ function getRequestMeta(req) {
 
 /**
  * ✅ FIX: รองรับทั้ง id (integer PK) และ bot_id (LINE User ID เช่น Udde271...)
- * ลอง id ก่อนถ้าเป็นตัวเลขล้วน ถ้าไม่ใช่ตัวเลขให้ query ด้วย bot_id แทน
+ * แยก query เป็น 2 กรณีชัดเจน ป้องกัน PostgreSQL type mismatch กับ OR condition
  */
 async function getTokenFromDB(botKey) {
   const key = String(botKey);
   const isNumeric = /^\d+$/.test(key);
 
-  const { rows } = await query(
-    `SELECT channel_access_token FROM bot_config
-     WHERE (${isNumeric ? "id = $1::int OR " : ""}bot_id = $1)
-       AND richmenu_enabled = true
-     LIMIT 1`,
-    [key],
-  );
+  let rows;
+
+  if (isNumeric) {
+    // botKey เป็น integer id (PK)
+    ({ rows } = await query(
+      `SELECT channel_access_token FROM bot_config
+       WHERE id = $1 AND richmenu_enabled = true
+       LIMIT 1`,
+      [parseInt(key, 10)],
+    ));
+  } else {
+    // botKey เป็น LINE User ID (text)
+    ({ rows } = await query(
+      `SELECT channel_access_token FROM bot_config
+       WHERE bot_id = $1 AND richmenu_enabled = true
+       LIMIT 1`,
+      [key],
+    ));
+  }
 
   if (rows[0]?.channel_access_token) return rows[0].channel_access_token;
   console.error(`[Dashboard] ไม่พบ token สำหรับ botKey: "${botKey}"`);
@@ -162,21 +174,36 @@ async function getTokenFromDB(botKey) {
 
 /**
  * ✅ FIX: รองรับทั้ง id (integer PK) และ bot_id (LINE User ID)
- * คืน row ทั้งหมดรวมถึง bot.id ที่ใช้เป็น PK จริงๆ
+ * แยก query เป็น 2 กรณีชัดเจน ป้องกัน PostgreSQL type mismatch
  */
 async function getBotConfig(botKey) {
   const key = String(botKey);
   const isNumeric = /^\d+$/.test(key);
 
-  const { rows } = await query(
-    `SELECT id, nickname, bot_id, channel_access_token,
-            active_rich_menu_id, rich_menus
-     FROM bot_config
-     WHERE (${isNumeric ? "id = $1::int OR " : ""}bot_id = $1)
-       AND richmenu_enabled = true
-     LIMIT 1`,
-    [key],
-  );
+  let rows;
+
+  if (isNumeric) {
+    // botKey เป็น integer id (PK)
+    ({ rows } = await query(
+      `SELECT id, nickname, bot_id, channel_access_token,
+              active_rich_menu_id, rich_menus
+       FROM bot_config
+       WHERE id = $1 AND richmenu_enabled = true
+       LIMIT 1`,
+      [parseInt(key, 10)],
+    ));
+  } else {
+    // botKey เป็น LINE User ID (text)
+    ({ rows } = await query(
+      `SELECT id, nickname, bot_id, channel_access_token,
+              active_rich_menu_id, rich_menus
+       FROM bot_config
+       WHERE bot_id = $1 AND richmenu_enabled = true
+       LIMIT 1`,
+      [key],
+    ));
+  }
+
   return rows[0] || null;
 }
 
