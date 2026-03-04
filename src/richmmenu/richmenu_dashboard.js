@@ -486,7 +486,9 @@ export default async function handler(req, res) {
              COALESCE(al.admin_avatar, a.profile_url)   AS admin_avatar
            FROM audit_logs al
            LEFT JOIN admin_system a ON a.admin_id = al.admin_id
-           WHERE al.bot_key = $1
+           WHERE al.bot_key = (
+  SELECT bot_id FROM bot_config WHERE id = $1 LIMIT 1
+)
            ORDER BY al.created_at DESC
            LIMIT 200`,
           [decodeURIComponent(botKey)],
