@@ -15,12 +15,19 @@
 //     ข้อมูลทั้งหมดอยู่ใน bot_config
 //
 // Columns ที่ใช้ใน bot_config:
-//   id, nickname, bot_id (ใช้แทน bot_key), channel_access_token,
-//   picture_url, bot_user_id, is_deleted,
-//   active_rich_menu_id, rich_menus (JSONB)
+//   id (INTEGER PK), nickname, bot_id (TEXT), channel_access_token,
+//   picture_url, active_rich_menu_id, rich_menus (JSONB), richmenu_enabled
 //
 // โครงสร้างแต่ละ element ใน rich_menus JSONB:
 //   { richMenuId, name, image_url, is_deleted }
+//
+// ✅ FIX NOTES:
+//   - getTokenFromDB()  : รองรับทั้ง id (integer) และ bot_id (LINE User ID)
+//   - getBotConfig()    : รองรับทั้ง id (integer) และ bot_id (LINE User ID)
+//   - updateRichMenus() : ใช้ bot.id (integer PK) แทน botKey เสมอ
+//   - action=current    : UPDATE ใช้ id แทน bot_id
+//   - action=delete     : UPDATE active_rich_menu_id = NULL ใช้ id แทน bot_id
+//   - action=upload     : สร้าง imageUrl ใช้ bot.id แทน botKey (ที่อาจเป็น string)
 // ============================================================
 
 import { query, pool } from "../lib/db.js";
@@ -133,44 +140,54 @@ function getRequestMeta(req) {
 }
 
 /**
- * ดึง channel_access_token จาก bot_config ด้วย bot_id (botKey)
- * รองรับทั้ง bot_id ตรงๆ และ id (integer)
+ * ✅ FIX: รองรับทั้ง id (integer PK) และ bot_id (LINE User ID เช่น Udde271...)
+ * ลอง id ก่อนถ้าเป็นตัวเลขล้วน ถ้าไม่ใช่ตัวเลขให้ query ด้วย bot_id แทน
  */
 async function getTokenFromDB(botKey) {
+  const key = String(botKey);
+  const isNumeric = /^\d+$/.test(key);
+
   const { rows } = await query(
     `SELECT channel_access_token FROM bot_config
-     WHERE id = $1 AND richmenu_enabled = true
+     WHERE (${isNumeric ? "id = $1::int OR " : ""}bot_id = $1)
+       AND richmenu_enabled = true
      LIMIT 1`,
-    [String(botKey)],
+    [key],
   );
+
   if (rows[0]?.channel_access_token) return rows[0].channel_access_token;
   console.error(`[Dashboard] ไม่พบ token สำหรับ botKey: "${botKey}"`);
   return null;
 }
 
 /**
- * ดึง bot_config ทั้ง row ด้วย bot_id
+ * ✅ FIX: รองรับทั้ง id (integer PK) และ bot_id (LINE User ID)
+ * คืน row ทั้งหมดรวมถึง bot.id ที่ใช้เป็น PK จริงๆ
  */
 async function getBotConfig(botKey) {
+  const key = String(botKey);
+  const isNumeric = /^\d+$/.test(key);
+
   const { rows } = await query(
     `SELECT id, nickname, bot_id, channel_access_token,
             active_rich_menu_id, rich_menus
      FROM bot_config
-     WHERE id = $1 AND richmenu_enabled = true  -- ใช้ id แทน bot_id
+     WHERE (${isNumeric ? "id = $1::int OR " : ""}bot_id = $1)
+       AND richmenu_enabled = true
      LIMIT 1`,
-    [String(botKey)],
+    [key],
   );
   return rows[0] || null;
 }
 
 /**
- * อัปเดต rich_menus JSONB ใน bot_config
- * newMenus: array ของ { richMenuId, name, image_url, is_deleted }
+ * ✅ FIX: ใช้ bot.id (integer PK) เสมอ ไม่ใช้ botKey ที่อาจเป็น bot_id (string)
+ * ทุก caller ต้องส่ง bot.id มาแทน botKey raw
  */
-async function updateRichMenus(botKey, newMenus) {
+async function updateRichMenus(botId, newMenus) {
   await query(
-    "UPDATE bot_config SET rich_menus = $1::jsonb WHERE bot_id = $2",
-    [JSON.stringify(newMenus), botKey],
+    "UPDATE bot_config SET rich_menus = $1::jsonb WHERE id = $2",
+    [JSON.stringify(newMenus), botId],
   );
 }
 
@@ -209,7 +226,7 @@ export default async function handler(req, res) {
 
         let currentMenuId = bot.active_rich_menu_id || null;
 
-        // Fallback: ดึงจาก LINE API เมื่อ DB ยังไม่มีค่า (เช่น บอทเพิ่งเพิ่มเข้าระบบ)
+        // Fallback: ดึงจาก LINE API เมื่อ DB ยังไม่มีค่า
         if (!currentMenuId) {
           try {
             const lineRes = await fetch(
@@ -223,11 +240,11 @@ export default async function handler(req, res) {
             if (lineRes.ok) {
               const lineData = await lineRes.json();
               currentMenuId = lineData.richMenuId || null;
-              // sync ค่ากลับ DB เพื่อครั้งต่อไปจะได้ไม่ต้องเรียก LINE อีก
+              // ✅ FIX: sync ค่ากลับ DB ใช้ id (integer PK) แทน bot_id
               if (currentMenuId) {
                 await query(
-                  "UPDATE bot_config SET active_rich_menu_id = $1 WHERE bot_id = $2",
-                  [currentMenuId, botKey],
+                  "UPDATE bot_config SET active_rich_menu_id = $1 WHERE id = $2",
+                  [currentMenuId, bot.id],
                 );
               }
             }
@@ -240,9 +257,10 @@ export default async function handler(req, res) {
         if (currentMenuId) {
           const richMenus = Array.isArray(bot.rich_menus) ? bot.rich_menus : [];
           const found = richMenus.find((m) => m.richMenuId === currentMenuId);
+          // ✅ FIX: fallback image URL ใช้ bot.id แทน botKey
           imageUrl =
             found?.image_url ||
-            `/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${currentMenuId}`;
+            `/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(bot.id)}&menuId=${currentMenuId}`;
         }
 
         return res.status(200).json({ currentMenuId, imageUrl });
@@ -256,7 +274,7 @@ export default async function handler(req, res) {
     }
 
     // ── list ─────────────────────────────────────────────────
-    // ดึงรายการเมนูจาก bot_config.rich_menus + auto sync จาก LINE
+    // ดึงรายการเมนูจาก bot_config.rich_menus
     if (action === "list") {
       try {
         const botKey = req.query.botKey;
@@ -266,18 +284,23 @@ export default async function handler(req, res) {
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
 
-        // ดึงจาก DB ก่อน (เร็ว) — ไม่ sync LINE ทุกครั้ง
-        // ถ้าต้องการ sync ให้กดปุ่ม sync แยกต่างหาก
         const existingMenus = Array.isArray(bot.rich_menus)
           ? bot.rich_menus
           : [];
+
+        const API_BASE =
+          process.env.API_BASE_URL ||
+          "https://internal-web-api-y4if.vercel.app";
 
         const visibleMenus = existingMenus
           .filter((m) => !m.is_deleted)
           .map((m) => ({
             richMenuId: m.richMenuId,
             name: m.name,
-            image_url: m.image_url,
+            // ✅ FIX: ถ้าไม่มี image_url ใน DB ให้ fallback ไปที่ proxy โดยใช้ bot.id
+            image_url:
+              m.image_url ||
+              `${API_BASE}/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(bot.id)}&menuId=${m.richMenuId}`,
             is_active: m.richMenuId === bot.active_rich_menu_id,
             created_at: null,
           }));
@@ -291,11 +314,6 @@ export default async function handler(req, res) {
 
     // ── switch ───────────────────────────────────────────────
     // เปลี่ยนเมนูให้ทุกคนพร้อมกันด้วย /richmenu/batch
-    //
-    // ทำไมต้องใช้ batch:
-    //   - /user/all/richmenu = set แค่ "Default" → คนที่เคย link เมนูเก่าไว้ยังเห็นเมนูเก่า
-    //   - /richmenu/batch = unlink ทุกคนออกจากเมนูเก่า + link เมนูใหม่ให้ทุกคน
-    //   - ผลคือทุกคนเห็นเมนูเดียวกันหมด ไม่ว่าจะเพิ่มเพื่อนเมื่อไหร่
     if (action === "switch") {
       try {
         const { botKey, menuId, adminId = null } = req.query;
@@ -312,7 +330,7 @@ export default async function handler(req, res) {
         const token = bot.channel_access_token;
         const prevMenuId = bot.active_rich_menu_id || null;
 
-        // STEP 1: set default ก่อน (ไม่มี rate limit)
+        // STEP 1: set default ก่อน
         const setDefaultRes = await fetch(
           `https://api.line.me/v2/bot/user/all/richmenu/${menuId}`,
           {
@@ -360,10 +378,10 @@ export default async function handler(req, res) {
           }
         }
 
-        // STEP 2: อัปเดต active_rich_menu_id ใน DB
+        // ✅ FIX: UPDATE ใช้ id (integer PK) เสมอ
         await query(
           "UPDATE bot_config SET active_rich_menu_id = $1 WHERE id = $2",
-          [menuId, botKey],
+          [menuId, bot.id],
         );
 
         const switchAdmin = await getAdminByEmail(adminId);
@@ -417,6 +435,7 @@ export default async function handler(req, res) {
     }
 
     // ── image proxy ──────────────────────────────────────────
+    // ✅ FIX: getTokenFromDB รองรับทั้ง id และ bot_id แล้ว
     if (action === "image") {
       try {
         let botKey = req.query.botKey;
@@ -454,9 +473,6 @@ export default async function handler(req, res) {
     }
 
     // ── audit_logs ───────────────────────────────────────────
-    // JOIN กับ audit_logs ตามปกติ แต่ใช้ bot_key = bot_id จาก bot_config
-    // (menu_name_from / menu_name_to ดึงจาก bot_config.rich_menus ไม่ได้ใน SQL ง่ายๆ
-    //  จึง fallback ให้แสดง menu_id แทนชื่อ)
     if (action === "audit_logs") {
       try {
         const botKey = req.query.botKey;
@@ -487,8 +503,8 @@ export default async function handler(req, res) {
            FROM audit_logs al
            LEFT JOIN admin_system a ON a.admin_id = al.admin_id
            WHERE al.bot_key = (
-  SELECT bot_id FROM bot_config WHERE id = $1 LIMIT 1
-)
+             SELECT bot_id FROM bot_config WHERE id = $1::int LIMIT 1
+           )
            ORDER BY al.created_at DESC
            LIMIT 200`,
           [decodeURIComponent(botKey)],
@@ -605,6 +621,7 @@ export default async function handler(req, res) {
         }
 
         // STEP 3: บันทึกลง bot_config.rich_menus JSONB
+        // ✅ FIX: getBotConfig รองรับทั้ง id และ bot_id แล้ว
         const bot = await getBotConfig(botKey);
         if (!bot) {
           await callLineAPI(
@@ -619,7 +636,9 @@ export default async function handler(req, res) {
         const API_BASE =
           process.env.API_BASE_URL ||
           "https://internal-web-api-y4if.vercel.app";
-        const imageUrl = `${API_BASE}/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(botKey)}&menuId=${richMenuId}`;
+
+        // ✅ FIX: imageUrl ใช้ bot.id (integer PK) แทน botKey ที่รับมา
+        const imageUrl = `${API_BASE}/src/richmmenu/richmenu_dashboard?action=image&botKey=${encodeURIComponent(bot.id)}&menuId=${richMenuId}`;
 
         const existingMenus = Array.isArray(bot.rich_menus)
           ? bot.rich_menus
@@ -631,7 +650,8 @@ export default async function handler(req, res) {
           is_deleted: false,
         };
 
-        await updateRichMenus(botKey, [...existingMenus, newMenu]);
+        // ✅ FIX: ส่ง bot.id ไปที่ updateRichMenus แทน botKey
+        await updateRichMenus(bot.id, [...existingMenus, newMenu]);
 
         await saveAuditLog({
           admin: actor,
@@ -659,7 +679,6 @@ export default async function handler(req, res) {
 
     // ── save_flow ────────────────────────────────────────────
     // บันทึก Flow (state + action-list)
-    // ใช้ bot_id จาก bot_config แทน bot_user_id (bot_id = LINE userId ของบอท)
     if (action === "save_flow") {
       try {
         const { botKey, botName, flowSteps, creatorId } = req.body;
@@ -798,6 +817,7 @@ export default async function handler(req, res) {
         const decodedBotKey = decodeURIComponent(rawBotKey);
         const actor = await getAdminByEmail(current_admin_id);
 
+        // ✅ FIX: getBotConfig รองรับทั้ง id และ bot_id แล้ว
         const bot = await getBotConfig(decodedBotKey);
         if (!bot) {
           await saveAuditLog({
@@ -827,13 +847,15 @@ export default async function handler(req, res) {
           const updatedMenus = existingMenus.map((m) =>
             m.richMenuId === menuId ? { ...m, is_deleted: true } : m,
           );
-          await updateRichMenus(decodedBotKey, updatedMenus);
 
-          // ถ้าลบเมนูที่กำลัง active อยู่ → ล้าง active_rich_menu_id
+          // ✅ FIX: ส่ง bot.id ไปที่ updateRichMenus
+          await updateRichMenus(bot.id, updatedMenus);
+
+          // ✅ FIX: ล้าง active_rich_menu_id ใช้ id (integer PK) แทน bot_id
           if (bot.active_rich_menu_id === menuId) {
             await query(
-              "UPDATE bot_config SET active_rich_menu_id = NULL WHERE bot_id = $1",
-              [decodedBotKey],
+              "UPDATE bot_config SET active_rich_menu_id = NULL WHERE id = $1",
+              [bot.id],
             );
           }
 
