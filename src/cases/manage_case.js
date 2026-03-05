@@ -3,9 +3,6 @@
 import { query } from '../lib/db.js';
 import { writeAuditLog } from '../lib/logging.js';
 
-// ----------------------------------------------------------------------
-// Helper Function: บันทึก Log
-// ----------------------------------------------------------------------
 async function saveAdminLog({ adminId, email, first_name, last_name, action_type, status, ipAddress, userAgent, details }) {
   await writeAuditLog({
     adminId,
@@ -22,13 +19,14 @@ async function saveAdminLog({ adminId, email, first_name, last_name, action_type
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'PUT, OPTIONS',
+  'Access-Control-Allow-Methods': 'POST, PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
 export default async function handler(req, res) {
+  // Handle CORS Preflight
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    return res.status(200).set(corsHeaders).end();
   }
 
   const { id: case_id_raw } = req.query;
@@ -43,15 +41,22 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { current_admin_id, photo_id, file_url, description, viewed, old_url } = req.body;
-    
-    if (!current_admin_id || !photo_id || !file_url) {
-         return res.status(400).json({ message: 'Missing required fields' });
+    const { 
+      current_admin_id, 
+      photo_id, 
+      file_url, 
+      description, 
+      viewed, 
+      old_url,
+      is_hidden,
+      is_cover 
+    } = req.body;
+
+    // 1. ตรวจสอบ Admin (Common Check)
+    if (!current_admin_id) {
+      return res.status(400).json({ message: 'Admin ID is required' });
     }
 
-    const cleanPhotoId = photo_id.toString().replace(/[^a-zA-Z0-9-]/g, '');
-
-    // [UNIFIED] 1. ตรวจสอบ Admin จาก DB
     const { rows: actors } = await query(`
         SELECT admin_id, email, first_name, last_name 
         FROM admin_system 
@@ -59,50 +64,105 @@ export default async function handler(req, res) {
     `, [current_admin_id]);
 
     if (actors.length === 0) {
-        return res.status(403).json({ message: 'Unauthorized: Admin not found' });
+      return res.status(403).json({ message: 'Unauthorized: Admin not found' });
     }
     const actorAdmin = actors[0];
 
-    // [UNIFIED] 2. Update ข้อมูลใน DB
-    const { rows: updatedMedia } = await query(`
-        UPDATE voice_attachment
-        SET 
-            photo = $1,
-            viewed = $2, 
-            updated_on = NOW()
-        WHERE id = $3  
-        AND id IN (
-            SELECT attachment_id 
-            FROM voice_message_photos 
-            WHERE message_id = $4
-        )
-        RETURNING id, photo, updated_on;
-    `, [file_url, viewed, cleanPhotoId, case_id]);
+    // ----------------------------------------------------------------------
+    // METHOD: POST (สร้างข้อมูลใหม่)
+    // ----------------------------------------------------------------------
+    if (req.method === 'POST') {
+      if (!file_url) {
+        return res.status(400).json({ message: 'Missing file_url for new entry' });
+      }
 
-    if (updatedMedia.length === 0) {
-        await saveAdminLog({
-            adminId: actorAdmin.admin_id,
-            email: actorAdmin.email,
-            first_name: actorAdmin.first_name,
-            last_name: actorAdmin.last_name,
-            action_type: 'CASE_MEDIA_UPDATE',
-            status: 'FAILED',
-            ipAddress,
-            userAgent,
-            details: { 
-                reason: 'Photo ID not found or mismatch case',
-                case_id: case_id, 
-                attachment_id: cleanPhotoId
-            }
-        });
+      const { rows: newAttachment } = await query(`
+          INSERT INTO voice_attachment (photo, viewed, note, updated_on, status, is_hidden, is_cover)
+          VALUES ($1, $2, $3, NOW(), $4, $5, $6)
+          RETURNING id, photo;
+      `, [
+        file_url, 
+        viewed || 0, 
+        description || null,
+        'active',
+        is_hidden || false,
+        is_cover || false
+      ]);
 
-        return res.status(404).json({ 
-            message: 'Update failed. Photo ID not found or mismatch.' 
-        });
+      const newId = newAttachment[0].id;
+
+      await query(`
+          INSERT INTO voice_message_photos (message_id, attachment_id)
+          VALUES ($1, $2);
+      `, [case_id, newId]);
+
+      await saveAdminLog({
+        adminId: actorAdmin.admin_id,
+        email: actorAdmin.email,
+        first_name: actorAdmin.first_name,
+        last_name: actorAdmin.last_name,
+        action_type: 'CREATE_ATTACHMENT',
+        status: 'SUCCESS',
+        ipAddress,
+        userAgent,
+        details: { case_id, attachment_id: newId, url: file_url, note: description, is_hidden, is_cover }
+      });
+
+      return res.status(201).json({ success: true, data: newAttachment[0] });
     }
 
-    // 3. Save Success Log
-    await saveAdminLog({
+    // ----------------------------------------------------------------------
+    // METHOD: PUT (อัปเดตข้อมูลเดิม)
+    // ----------------------------------------------------------------------
+    if (req.method === 'PUT') {
+      if (!photo_id) {
+        return res.status(400).json({ message: 'Missing photo_id for update' });
+      }
+
+      const cleanPhotoId = photo_id.toString().replace(/[^a-zA-Z0-9-]/g, '');
+
+      /* ใช้ COALESCE เพื่อให้ถ้าไม่ได้ส่งค่านั้นๆ มาใน body 
+         ระบบจะรักษาค่าเดิม (Existing Value) ใน Database ไว้ ไม่ให้กลายเป็น null
+      */
+      const { rows: updatedMedia } = await query(`
+          UPDATE voice_attachment
+          SET 
+            photo = COALESCE($1, photo), 
+            viewed = COALESCE($2, viewed),
+            note = COALESCE($3, note),
+            is_hidden = COALESCE($4, is_hidden),
+            is_cover = COALESCE($5, is_cover),
+            updated_on = NOW()
+          WHERE id = $6  
+          AND id IN (SELECT attachment_id FROM voice_message_photos WHERE message_id = $7)
+          RETURNING id, photo, viewed, note, is_hidden, is_cover, updated_on;
+      `, [
+        file_url || null, 
+        viewed !== undefined ? viewed : null, 
+        description || null,
+        is_hidden !== undefined ? is_hidden : null,
+        is_cover !== undefined ? is_cover : null,
+        cleanPhotoId, 
+        case_id
+      ]);
+
+      if (updatedMedia.length === 0) {
+        await saveAdminLog({
+          adminId: actorAdmin.admin_id,
+          email: actorAdmin.email,
+          first_name: actorAdmin.first_name,
+          last_name: actorAdmin.last_name,
+          action_type: 'CASE_MEDIA_UPDATE',
+          status: 'FAILED',
+          ipAddress,
+          userAgent,
+          details: { reason: 'Not found or permission denied', case_id, attachment_id: cleanPhotoId }
+        });
+        return res.status(404).json({ message: 'Update failed. Photo not found.' });
+      }
+
+      // บันทึก Log เมื่อสำเร็จ
+      await saveAdminLog({
         adminId: actorAdmin.admin_id,
         email: actorAdmin.email,
         first_name: actorAdmin.first_name,
@@ -112,20 +172,22 @@ export default async function handler(req, res) {
         ipAddress,
         userAgent,
         details: { 
-            target: 'voice_attachment',
-            case_id: case_id, 
-            attachment_id: cleanPhotoId,
-            new_url: file_url,
-            new_type_code: viewed,
-            old_url: old_url || null,
-            description: description || "No reason provided"
+          case_id, 
+          attachment_id: cleanPhotoId, 
+          new_data: {
+            photo: file_url,
+            is_hidden,
+            is_cover,
+            note: description
+          },
+          old_url: old_url || null 
         }
-    });
+      });
 
-    return res.status(200).json({ 
-        success: true, 
-        data: updatedMedia[0]
-    });
+      return res.status(200).json({ success: true, data: updatedMedia[0] });
+    }
+
+    return res.status(405).json({ message: 'Method Not Allowed' });
 
   } catch (error) {
     console.error("API Error:", error);

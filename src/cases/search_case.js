@@ -44,7 +44,7 @@ export default async function handler(req, res) {
       const foundCase = cases[0]; 
 
       // -----------------------------------------------------
-      // STEP 2: ค้นหา Timeline/รูปภาพ จาก voice_attachment ผ่านตารางกลาง
+      // STEP 2: ค้นหา Timeline/รูปภาพ (ดึงเฉพาะที่ is_hidden = false)
       // -----------------------------------------------------
       const { rows: timeline } = await query(`
         SELECT 
@@ -53,10 +53,13 @@ export default async function handler(req, res) {
           a.viewed, 
           a.photo, 
           a.updated_on, 
-          a.status
+          a.status,
+          a.is_hidden,
+          a.is_cover
         FROM voice_attachment a
         JOIN voice_message_photos mp ON a.id = mp.attachment_id
-        WHERE mp.message_id = $1
+        WHERE mp.message_id = $1 
+        AND a.is_hidden = false  -- เพิ่มเงื่อนไขกรองข้อมูลที่ซ่อนอยู่ออก
         ORDER BY a.updated_on ASC;
       `, [foundCase.id]);
 
