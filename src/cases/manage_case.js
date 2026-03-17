@@ -114,7 +114,7 @@ export default async function handler(req, res) {
         last_name: actorAdmin.last_name,
         action_type: 'CASE_MEDIA_UPDATE', 
         status: 'SUCCESS', 
-        pAddress, 
+        ipAddress, 
         userAgent,
         details: { case_id, attachment_id: cleanPhotoId, new_data: { is_hidden, is_cover }, old_url }
       });
