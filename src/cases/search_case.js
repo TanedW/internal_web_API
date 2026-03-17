@@ -59,11 +59,11 @@ export default async function handler(req, res) {
         FROM voice_attachment a
         JOIN voice_message_photos mp ON a.id = mp.attachment_id
         WHERE mp.message_id = $1 
-        AND a.is_hidden = false  -- เพิ่มเงื่อนไขกรองข้อมูลที่ซ่อนอยู่ออก
-        ORDER BY a.updated_on ASC;
+        
+        ORDER BY a.is_cover DESC, a.updated_on ASC;
       `, [foundCase.id]);
 
-      // -----------------------------------------------------
+      // ----------------------------------------------------- AND a.is_hidden = false  -- เพิ่มเงื่อนไขกรองข้อมูลที่ซ่อนอยู่ออก 
       // STEP 3: รวมข้อมูลส่งกลับ
       // -----------------------------------------------------
       const resultData = {
