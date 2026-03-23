@@ -45,7 +45,7 @@
       if (req.method === 'GET') {
         const [canDelete, dbResult] = await Promise.all([
           requester_id 
-            ? permit.check(String(requester_id), "delete", { type: "Admin_Users", tenant: "default" }).catch(() => false)
+            ? permit.check(String(requester_id), "delete", { type: "Admin_User", tenant: "default" }).catch(() => false)
             : Promise.resolve(false),
           db.query(`SELECT admin_id, email, first_name, last_name, profile_url FROM admin_system WHERE is_deleted = false ORDER BY join_at DESC;`)
         ]);
@@ -185,7 +185,7 @@
 
         // 2. ตรวจสอบสิทธิ์ผู้แก้ไข (ต้องมีสิทธิ์จัดการ User หรือเป็นเจ้าของระบบ)
         // คุณสามารถเปลี่ยน "update" เป็น "manage" ตามที่ตั้งไว้ใน Permit.io
-        const isPermitted = await permit.check(String(current_admin_id), "update", { type: "Admin_Users", tenant: "default" });
+        const isPermitted = await permit.check(String(current_admin_id), "update", { type: "Admin_User", tenant: "default" });
         if (!isPermitted) {
           return res.status(403).json({ message: 'คุณไม่มีสิทธิ์ในการแก้ไขข้อมูลสมาชิก' });
         }
@@ -272,7 +272,7 @@
       if (req.method === 'DELETE') {
           if (!id || !actorAdmin) return res.status(400).json({ message: 'Invalid Request' });
 
-          const isPermitted = await permit.check(String(actorAdmin.admin_id), "delete", "Admin_Users");
+          const isPermitted = await permit.check(String(actorAdmin.admin_id), "delete", "Admin_User");
           if (!isPermitted) return res.status(403).json({ message: 'Forbidden' });
 
           const { rows: deletedUser } = await db.query(`UPDATE admin_system SET is_deleted = true WHERE admin_id = $1 RETURNING *;`, [id]);
