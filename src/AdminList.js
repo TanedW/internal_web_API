@@ -81,23 +81,111 @@
       }
 
       // POST: จัดการ Multi-role (Add / Reactivate / Update Roles)
+      // if (req.method === 'POST') {
+      //   const { email, roles } = body; // รับ roles เป็น Array จาก page.jsx
+      //   if (!email || !Array.isArray(roles)) {
+      //       return res.status(400).json({ message: 'Email and roles array are required' });
+      //   }
+
+      //   // กรองเฉพาะ Role ที่อนุญาต
+      //   const validRolesList = [
+      //     'admin', 
+      //     'editor', 
+      //     'editor_manage_case', 
+      //     'editor_manage_menu', 
+      //     'editor_manage_flex', 
+      //     'editor_manage_org', 
+      //     'editor_file_search', 
+      //     'editor_search_duplicate_org', 
+      //     'editor_manage_user'
+      //   ];
+      //   const assignedRoles = roles.filter(r => validRolesList.includes(r.toLowerCase()));
+      //   if (assignedRoles.length === 0) assignedRoles.push('editor');
+
+      //   const { rows: existing } = await db.query('SELECT * FROM admin_system WHERE email = $1 LIMIT 1', [email]);
+        
+      //   let targetUser;
+      //   let actionStatus = 'ADMIN_ADD';
+
+      //   if (existing.length > 0) {
+      //     targetUser = existing[0];
+      //     if (targetUser.is_deleted) {
+      //       const { rows: updated } = await db.query(`UPDATE admin_system SET is_deleted = false WHERE email = $1 RETURNING *;`, [email]);
+      //       targetUser = updated[0];
+      //       actionStatus = 'ADMIN_REACTIVATE';
+      //     } else {
+      //       actionStatus = 'ADMIN_UPDATE_ROLE';
+      //     }
+      //   } else {
+      //     const { rows: inserted } = await db.query(`INSERT INTO admin_system (email) VALUES ($1) RETURNING *;`, [email]);
+      //     targetUser = inserted[0];
+      //     actionStatus = 'ADMIN_CREATE_NEW';
+      //   }
+
+      //   // --- Sync กับ Permit.io สำหรับ Multi-role ---
+      //   try {
+      //     await permit.api.users.sync({
+      //       key: String(targetUser.admin_id),
+      //       email: targetUser.email,
+      //       first_name: targetUser.first_name || "",
+      //       last_name: targetUser.last_name || ""
+      //     });
+
+      //     // 1. ดึงบทบาทปัจจุบันใน Permit ออกมา
+      //     const currentAssigned = await permit.api.users.getAssignedRoles({ 
+      //         user: String(targetUser.admin_id), 
+      //         tenant: "default" 
+      //     });
+      //     const currentRoleKeys = currentAssigned.map(r => r.role);
+
+      //     // 2. ลบบทบาทที่ไม่ได้อยู่ใน List ใหม่ (กรณี Update)
+      //     for (const oldRole of currentRoleKeys) {
+      //         if (!assignedRoles.includes(oldRole)) {
+      //             await permit.api.users.unassignRole({
+      //                 user: String(targetUser.admin_id),
+      //                 role: oldRole,
+      //                 tenant: "default"
+      //             });
+      //         }
+      //     }
+
+      //     // 3. เพิ่มบทบาทใหม่ที่ยังไม่มี
+      //     for (const newRole of assignedRoles) {
+      //         if (!currentRoleKeys.includes(newRole)) {
+      //             await permit.api.users.assignRole({
+      //                 user: String(targetUser.admin_id),
+      //                 role: newRole,
+      //                 tenant: "default"
+      //             });
+      //         }
+      //     }
+      //   } catch (e) {
+      //     console.error("Permit Multi-role Sync Error:", e);
+      //   }
+
+      //   if (actorAdmin) {
+      //       await saveAdminLog({
+      //         adminId: actorAdmin.admin_id, email: actorAdmin.email, first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
+      //         action_type: actionStatus, status: 'SUCCESS', ipAddress, userAgent,
+      //         details: { target_id: targetUser.admin_id, assigned_roles: assignedRoles }
+      //       });
+      //   }
+
+      //   return res.status(200).json({ ...targetUser, roles: assignedRoles });
+      // }
+
+      // POST: จัดการ Multi-role (Add / Reactivate / Update Roles)
       if (req.method === 'POST') {
-        const { email, roles } = body; // รับ roles เป็น Array จาก page.jsx
+        const { email, roles } = body; 
         if (!email || !Array.isArray(roles)) {
             return res.status(400).json({ message: 'Email and roles array are required' });
         }
 
         // กรองเฉพาะ Role ที่อนุญาต
         const validRolesList = [
-          'admin', 
-          'editor', 
-          'editor_manage_case', 
-          'editor_manage_menu', 
-          'editor_manage_flex', 
-          'editor_manage_org', 
-          'editor_file_search', 
-          'editor_search_duplicate_org', 
-          'editor_manage_user'
+          'admin', 'editor', 'editor_manage_case', 'editor_manage_menu', 
+          'editor_manage_flex', 'editor_manage_org', 'editor_file_search', 
+          'editor_search_duplicate_org', 'editor_manage_user'
         ];
         const assignedRoles = roles.filter(r => validRolesList.includes(r.toLowerCase()));
         if (assignedRoles.length === 0) assignedRoles.push('editor');
@@ -109,14 +197,23 @@
 
         if (existing.length > 0) {
           targetUser = existing[0];
+
+          // --- ส่วนที่ปรับปรุง: เช็คว่ามี Email อยู่ในระบบและยังไม่ถูกลบหรือไม่ ---
+          if (!targetUser.is_deleted) {
+            return res.status(400).json({ message: 'มี email อยู่ในระบบแล้ว' });
+          }
+
+          // กรณีเคยถูกลบ (is_deleted = true) ให้ดึงกลับมาใช้งานใหม่
           if (targetUser.is_deleted) {
-            const { rows: updated } = await db.query(`UPDATE admin_system SET is_deleted = false WHERE email = $1 RETURNING *;`, [email]);
+            const { rows: updated } = await db.query(
+              `UPDATE admin_system SET is_deleted = false WHERE email = $1 RETURNING *;`, 
+              [email]
+            );
             targetUser = updated[0];
             actionStatus = 'ADMIN_REACTIVATE';
-          } else {
-            actionStatus = 'ADMIN_UPDATE_ROLE';
           }
         } else {
+          // กรณีไม่มีอีเมลนี้เลย ให้สร้างใหม่
           const { rows: inserted } = await db.query(`INSERT INTO admin_system (email) VALUES ($1) RETURNING *;`, [email]);
           targetUser = inserted[0];
           actionStatus = 'ADMIN_CREATE_NEW';
@@ -131,14 +228,12 @@
             last_name: targetUser.last_name || ""
           });
 
-          // 1. ดึงบทบาทปัจจุบันใน Permit ออกมา
           const currentAssigned = await permit.api.users.getAssignedRoles({ 
               user: String(targetUser.admin_id), 
               tenant: "default" 
           });
           const currentRoleKeys = currentAssigned.map(r => r.role);
 
-          // 2. ลบบทบาทที่ไม่ได้อยู่ใน List ใหม่ (กรณี Update)
           for (const oldRole of currentRoleKeys) {
               if (!assignedRoles.includes(oldRole)) {
                   await permit.api.users.unassignRole({
@@ -149,7 +244,6 @@
               }
           }
 
-          // 3. เพิ่มบทบาทใหม่ที่ยังไม่มี
           for (const newRole of assignedRoles) {
               if (!currentRoleKeys.includes(newRole)) {
                   await permit.api.users.assignRole({
