@@ -45,7 +45,7 @@
       if (req.method === 'GET') {
         const [canDelete, dbResult] = await Promise.all([
           requester_id 
-            ? permit.check(String(requester_id), "delete", { type: "Admin_User", tenant: "default" }).catch(() => false)
+            ? permit.check(String(requester_id), "delete", { type: "Admin_user", tenant: "default" }).catch(() => false)
             : Promise.resolve(false),
           db.query(`SELECT admin_id, email, first_name, last_name, profile_url FROM admin_system WHERE is_deleted = false ORDER BY join_at DESC;`)
         ]);
