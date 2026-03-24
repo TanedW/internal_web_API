@@ -174,179 +174,99 @@
         return res.status(200).json({ ...targetUser, roles: assignedRoles });
       }
 
-      // POST: จัดการ Multi-role (Add New / Reactivate / Append Roles)
-if (req.method === 'POST') {
-  const { email, roles } = body; 
-  if (!email || !Array.isArray(roles)) {
-      return res.status(400).json({ message: 'Email and roles array are required' });
-  }
-
-  // 1. กรองเฉพาะ Role ที่อนุญาต
-  const validRolesList = [
-    'admin', 'editor', 'editor_manage_case', 'editor_manage_menu', 
-    'editor_manage_flex', 'editor_manage_org', 'editor_file_search', 
-    'editor_search_duplicate_org', 'editor_manage_user'
-  ];
-  const incomingRoles = roles.filter(r => validRolesList.includes(r.toLowerCase()));
-  if (incomingRoles.length === 0) incomingRoles.push('editor');
-
-  // 2. ตรวจสอบ User ใน Database
-  const { rows: existing } = await db.query('SELECT * FROM admin_system WHERE email = $1 LIMIT 1', [email]);
-  
-  let targetUser;
-  let actionStatus = 'ADMIN_CREATE_NEW';
-
-  if (existing.length > 0) {
-    targetUser = existing[0];
-    if (targetUser.is_deleted) {
-      // กรณีเคยถูกลบ ให้ดึงกลับมา (Reactivate)
-      const { rows: updated } = await db.query(`UPDATE admin_system SET is_deleted = false WHERE email = $1 RETURNING *;`, [email]);
-      targetUser = updated[0];
-      actionStatus = 'ADMIN_REACTIVATE';
-    } else {
-      // กรณีมีตัวตนอยู่แล้ว ให้บันทึกว่าเป็นการเพิ่มสิทธิ์
-      actionStatus = 'ADMIN_APPEND_ROLE';
-    }
-  } else {
-    // กรณีเป็น User ใหม่แกะกล่อง
-    const { rows: inserted } = await db.query(`INSERT INTO admin_system (email) VALUES ($1) RETURNING *;`, [email]);
-    targetUser = inserted[0];
-    actionStatus = 'ADMIN_CREATE_NEW';
-  }
-
-  // --- Sync กับ Permit.io แบบ Append Only ---
-  try {
-    await permit.api.users.sync({
-      key: String(targetUser.admin_id),
-      email: targetUser.email,
-      first_name: targetUser.first_name || "",
-      last_name: targetUser.last_name || ""
-    });
-
-    // ก) ดึงบทบาทปัจจุบันใน Permit ออกมา (ถ้ามี)
-    const currentAssigned = await permit.api.users.getAssignedRoles({ 
-        user: String(targetUser.admin_id), 
-        tenant: "default" 
-    });
-    const currentRoleKeys = currentAssigned.map(r => r.role);
-
-    // ข) เพิ่มเฉพาะบทบาทใหม่ที่ยังไม่มี (ไม่มีการสั่ง Unassign ของเก่า)
-    const newlyAdded = [];
-    for (const roleToAdd of incomingRoles) {
-        if (!currentRoleKeys.includes(roleToAdd)) {
-            await permit.api.users.assignRole({
-                user: String(targetUser.admin_id),
-                role: roleToAdd,
-                tenant: "default"
-            });
-            newlyAdded.push(roleToAdd);
-        }
-    }
-
-    // 3. บันทึก Log
-    if (actorAdmin) {
-        await saveAdminLog({
-          adminId: actorAdmin.admin_id, 
-          email: actorAdmin.email, 
-          action_type: actionStatus, 
-          status: 'SUCCESS', 
-          ipAddress, 
-          userAgent,
-          details: { 
-            target_id: targetUser.admin_id, 
-            added_roles: newlyAdded,
-            all_roles: [...new Set([...currentRoleKeys, ...newlyAdded])]
-          }
-        });
-    }
-
-    return res.status(200).json({ 
-      ...targetUser, 
-      roles: [...new Set([...currentRoleKeys, ...newlyAdded])] 
-    });
-
-  } catch (e) {
-    console.error("Permit Append Role Error:", e);
-    return res.status(500).json({ message: 'Error syncing roles with Permit.io' });
-  }
-}
-
       // PUT: อัปเดตบทบาทสมาชิกที่มีอยู่แล้ว
-
-if (req.method === 'PUT') {
-  const { admin_id, roles, current_admin_id } = body; // roles คือรายการที่จะเอามา "เพิ่ม"
-  
-  if (!admin_id || !Array.isArray(roles)) {
-    return res.status(400).json({ message: 'Admin ID and roles array are required' });
-  }
-
-  const isPermitted = await permit.check(String(current_admin_id), "update", { type: "Admin_Users", tenant: "default" });
-  if (!isPermitted) {
-    return res.status(403).json({ message: 'คุณไม่มีสิทธิ์ในการแก้ไขข้อมูลสมาชิก' });
-  }
-
-  const { rows: existing } = await db.query('SELECT * FROM admin_system WHERE admin_id = $1 AND is_deleted = false', [admin_id]);
-  if (existing.length === 0) {
-    return res.status(404).json({ message: 'ไม่พบรายชื่อสมาชิกนี้ในระบบ' });
-  }
-  const targetUser = existing[0];
-
-  const validRolesList = [
-    'admin', 'editor', 'editor_manage_case', 'editor_manage_menu', 
-    'editor_manage_flex', 'editor_manage_org', 'editor_file_search', 
-    'editor_search_duplicate_org', 'editor_manage_user'
-  ];
-  const incomingRoles = roles.filter(r => validRolesList.includes(r));
-
-  try {
-    // 1. ดึงบทบาทปัจจุบันที่เขามีอยู่แล้ว
-    const currentAssigned = await permit.api.users.getAssignedRoles({ 
-        user: String(targetUser.admin_id), 
-        tenant: "default" 
-    });
-    const currentRoleKeys = currentAssigned.map(r => r.role);
-
-    // 2. วนลูปเฉพาะบทบาทใหม่ที่ส่งมา ถ้ายังไม่มีในปัจจุบัน ให้ "เพิ่ม" เข้าไป
-    const addedRoles = [];
-    for (const roleToAdd of incomingRoles) {
-        if (!currentRoleKeys.includes(roleToAdd)) {
-            await permit.api.users.assignRole({
-                user: String(targetUser.admin_id),
-                role: roleToAdd,
-                tenant: "default"
-            });
-            addedRoles.push(roleToAdd);
+      if (req.method === 'PUT') {
+        const { admin_id, roles, current_admin_id } = body;
+        
+        // 1. Validation เบื้องต้น
+        if (!admin_id || !Array.isArray(roles)) {
+          return res.status(400).json({ message: 'Admin ID and roles array are required' });
         }
-    }
 
-    // 3. บันทึก Audit Log เฉพาะส่วนที่เพิ่มเข้าไปใหม่
-    if (actorAdmin && addedRoles.length > 0) {
-        await saveAdminLog({
-          adminId: actorAdmin.admin_id, 
-          email: actorAdmin.email, 
-          action_type: 'ADMIN_ADD_ROLE_EXTRA', 
-          status: 'SUCCESS', 
-          ipAddress, 
-          userAgent,
-          details: { 
-              target_id: admin_id, 
-              added_roles: addedRoles,
-              total_roles_now: [...new Set([...currentRoleKeys, ...addedRoles])]
+        // 2. ตรวจสอบสิทธิ์ผู้แก้ไข (ต้องมีสิทธิ์จัดการ User หรือเป็นเจ้าของระบบ)
+        // คุณสามารถเปลี่ยน "update" เป็น "manage" ตามที่ตั้งไว้ใน Permit.io
+        const isPermitted = await permit.check(String(current_admin_id), "update", { type: "Admin_Users", tenant: "default" });
+        if (!isPermitted) {
+          return res.status(403).json({ message: 'คุณไม่มีสิทธิ์ในการแก้ไขข้อมูลสมาชิก' });
+        }
+
+        // 3. ดึงข้อมูล User จาก Database
+        const { rows: existing } = await db.query('SELECT * FROM admin_system WHERE admin_id = $1 AND is_deleted = false', [admin_id]);
+        if (existing.length === 0) {
+          return res.status(404).json({ message: 'ไม่พบรายชื่อสมาชิกนี้ในระบบ' });
+        }
+        const targetUser = existing[0];
+
+        // 4. กรองเฉพาะ Role ที่ระบบอนุญาต (White-list)
+        const validRolesList = [
+          'admin', 'editor', 'editor_manage_case', 'editor_manage_menu', 
+          'editor_manage_flex', 'editor_manage_org', 'editor_file_search', 
+          'editor_search_duplicate_org', 'editor_manage_user'
+        ];
+        const newAssignedRoles = roles.filter(r => validRolesList.includes(r));
+        if (newAssignedRoles.length === 0) newAssignedRoles.push('editor'); // Default role
+
+        // 5. --- Sync กับ Permit.io (หัวใจหลักของการเปลี่ยน Role) ---
+        try {
+          // ดึงบทบาทที่ User มีอยู่ในปัจจุบันจาก Permit.io
+          const currentAssigned = await permit.api.users.getAssignedRoles({ 
+              user: String(targetUser.admin_id), 
+              tenant: "default" 
+          });
+          const currentRoleKeys = currentAssigned.map(r => r.role);
+
+          // (A) ลบบทบาทเก่าที่ไม่ได้เลือกแล้ว (Unassign)
+          for (const oldRole of currentRoleKeys) {
+              if (!newAssignedRoles.includes(oldRole)) {
+                  await permit.api.users.unassignRole({
+                      user: String(targetUser.admin_id),
+                      role: oldRole,
+                      tenant: "default"
+                  });
+              }
           }
+
+          // (B) เพิ่มบทบาทใหม่ที่ยังไม่มี (Assign)
+          for (const newRole of newAssignedRoles) {
+              if (!currentRoleKeys.includes(newRole)) {
+                  await permit.api.users.assignRole({
+                      user: String(targetUser.admin_id),
+                      role: newRole,
+                      tenant: "default"
+                  });
+              }
+          }
+        } catch (permitError) {
+          console.error("Permit Update Role Error:", permitError);
+          // ถึงแม้ Permit จะพลาด แต่เราอาจจะยอมให้ผ่าน หรือ return error ตามความสำคัญ
+        }
+
+        // 6. บันทึก Audit Log
+        if (actorAdmin) {
+            await saveAdminLog({
+              adminId: actorAdmin.admin_id, 
+              email: actorAdmin.email, 
+              first_name: actorAdmin.first_name, 
+              last_name: actorAdmin.last_name,
+              action_type: 'ADMIN_UPDATE_ROLE', 
+              status: 'SUCCESS', 
+              ipAddress, 
+              userAgent,
+              details: { 
+                  target_id: admin_id, 
+                  target_email: targetUser.email,
+                  old_roles: (await permit.api.users.getAssignedRoles({ user: String(targetUser.admin_id), tenant: "default" })).map(r => r.role),
+                  new_roles: newAssignedRoles 
+              }
+            });
+        }
+
+        return res.status(200).json({ 
+          message: 'อัปเดตบทบาทสำเร็จ', 
+          admin_id: targetUser.admin_id, 
+          roles: newAssignedRoles 
         });
-    }
-
-    return res.status(200).json({ 
-      message: addedRoles.length > 0 ? 'เพิ่มบทบาทใหม่สำเร็จ' : 'ผู้ใช้งานมีบทบาทเหล่านี้อยู่แล้ว', 
-      added: addedRoles,
-      current_all_roles: [...new Set([...currentRoleKeys, ...addedRoles])] 
-    });
-
-  } catch (permitError) {
-    console.error("Permit Add Role Error:", permitError);
-    return res.status(500).json({ message: 'เกิดข้อผิดพลาดในการเชื่อมต่อ Permit.io' });
-  }
-}
+      }
 
       // DELETE (Soft Delete)
       if (req.method === 'DELETE') {
