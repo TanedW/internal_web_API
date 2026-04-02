@@ -212,10 +212,10 @@ async function getBotConfig(botKey) {
  * ทุก caller ต้องส่ง bot.id มาแทน botKey raw
  */
 async function updateRichMenus(botId, newMenus) {
-  await query(
-    "UPDATE bot_config SET rich_menus = $1::jsonb WHERE id = $2",
-    [JSON.stringify(newMenus), botId],
-  );
+  await query("UPDATE bot_config SET rich_menus = $1::jsonb WHERE id = $2", [
+    JSON.stringify(newMenus),
+    botId,
+  ]);
 }
 
 // ============================================================
@@ -225,7 +225,7 @@ async function updateRichMenus(botId, newMenus) {
 async function lineLink(token, richMenuId, lineUserId) {
   const res = await fetch(
     `https://api.line.me/v2/bot/richmenu/${richMenuId}/users/${lineUserId}`,
-    { method: "POST", headers: { Authorization: `Bearer ${token}` } }
+    { method: "POST", headers: { Authorization: `Bearer ${token}` } },
   );
   return { ok: res.ok, status: res.status };
 }
@@ -233,7 +233,7 @@ async function lineLink(token, richMenuId, lineUserId) {
 async function lineUnlink(token, lineUserId) {
   const res = await fetch(
     `https://api.line.me/v2/bot/richmenu/users/${lineUserId}`,
-    { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
+    { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
   );
   return { ok: res.ok, status: res.status };
 }
@@ -568,13 +568,17 @@ export default async function handler(req, res) {
     if (action === "list_segments") {
       try {
         const botKey = req.query.botKey;
-        if (!botKey) return res.status(400).json({ error: "botKey is required" });
+        if (!botKey)
+          return res.status(400).json({ error: "botKey is required" });
 
         // ตรวจสอบ migration
         const { rows: tc } = await query(
-          `SELECT 1 FROM information_schema.tables WHERE table_name = 'richmenu_segments' LIMIT 1`
+          `SELECT 1 FROM information_schema.tables WHERE table_name = 'richmenu_segments' LIMIT 1`,
         );
-        if (!tc.length) return res.status(200).json({ segments: [], _warning: "migration ยังไม่ได้รัน" });
+        if (!tc.length)
+          return res
+            .status(200)
+            .json({ segments: [], _warning: "migration ยังไม่ได้รัน" });
 
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
@@ -590,7 +594,7 @@ export default async function handler(req, res) {
            WHERE s.bot_id = $1 AND s.is_active = true
            GROUP BY s.id, rsm.rich_menu_id, rsm.rich_menu_name, rsm.assigned_at
            ORDER BY s.is_default DESC, s.created_at ASC`,
-          [bot.id]
+          [bot.id],
         );
         return res.status(200).json({ segments: rows });
       } catch (err) {
@@ -603,25 +607,33 @@ export default async function handler(req, res) {
     if (action === "segment_detail") {
       try {
         const { botKey, segmentId } = req.query;
-        if (!botKey || !segmentId) return res.status(400).json({ error: "botKey and segmentId are required" });
+        if (!botKey || !segmentId)
+          return res
+            .status(400)
+            .json({ error: "botKey and segmentId are required" });
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
         const { rows: segRows } = await query(
           `SELECT * FROM richmenu_segments WHERE id = $1 AND bot_id = $2 LIMIT 1`,
-          [segmentId, bot.id]
+          [segmentId, bot.id],
         );
-        if (!segRows[0]) return res.status(404).json({ error: "Segment not found" });
+        if (!segRows[0])
+          return res.status(404).json({ error: "Segment not found" });
         const { rows: menuRows } = await query(
           `SELECT id, rich_menu_id, rich_menu_name, is_active, assigned_by, assigned_at, unassigned_at
            FROM richmenu_segment_menus WHERE segment_id = $1 ORDER BY assigned_at DESC`,
-          [segmentId]
+          [segmentId],
         );
         const { rows: userRows } = await query(
           `SELECT id, line_user_id, display_name, source, created_at
            FROM richmenu_user_segments WHERE segment_id = $1 ORDER BY created_at DESC`,
-          [segmentId]
+          [segmentId],
         );
-        return res.status(200).json({ segment: segRows[0], menu_history: menuRows, users: userRows });
+        return res.status(200).json({
+          segment: segRows[0],
+          menu_history: menuRows,
+          users: userRows,
+        });
       } catch (err) {
         console.error("[segment_detail]", err);
         return res.status(500).json({ error: err.message });
@@ -632,7 +644,10 @@ export default async function handler(req, res) {
     if (action === "menu_usage") {
       try {
         const { botKey, richMenuId } = req.query;
-        if (!botKey || !richMenuId) return res.status(400).json({ error: "botKey and richMenuId are required" });
+        if (!botKey || !richMenuId)
+          return res
+            .status(400)
+            .json({ error: "botKey and richMenuId are required" });
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
         const { rows } = await query(
@@ -645,7 +660,7 @@ export default async function handler(req, res) {
            WHERE rsm.rich_menu_id = $1 AND s.bot_id = $2
            GROUP BY s.id, s.name, s.is_default, rsm.is_active, rsm.assigned_at
            ORDER BY rsm.is_active DESC, rsm.assigned_at DESC`,
-          [richMenuId, bot.id]
+          [richMenuId, bot.id],
         );
         return res.status(200).json({ usage: rows });
       } catch (err) {
@@ -1033,12 +1048,21 @@ export default async function handler(req, res) {
     // ── create_segment ─────────────────────────────────────────
     if (action === "create_segment") {
       try {
-        const { botKey, name, description, is_default = false, adminEmail } = req.body;
-        if (!botKey || !name) return res.status(400).json({ error: "botKey and name are required" });
+        const {
+          botKey,
+          name,
+          description,
+          is_default = false,
+          adminEmail,
+        } = req.body;
+        if (!botKey || !name)
+          return res
+            .status(400)
+            .json({ error: "botKey and name are required" });
 
         // ตรวจสอบว่า migration รันแล้วหรือยัง
         const { rows: tableCheck } = await query(
-          `SELECT 1 FROM information_schema.tables WHERE table_name = 'richmenu_segments' LIMIT 1`
+          `SELECT 1 FROM information_schema.tables WHERE table_name = 'richmenu_segments' LIMIT 1`,
         );
         if (!tableCheck.length) {
           return res.status(503).json({
@@ -1050,16 +1074,26 @@ export default async function handler(req, res) {
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
         if (is_default) {
-          await query(`UPDATE richmenu_segments SET is_default = false WHERE bot_id = $1`, [bot.id]);
+          await query(
+            `UPDATE richmenu_segments SET is_default = false WHERE bot_id = $1`,
+            [bot.id],
+          );
         }
         const { rows } = await query(
           `INSERT INTO richmenu_segments (bot_id, name, description, is_default, created_by)
            VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-          [bot.id, name.trim(), description || null, is_default, adminEmail || null]
+          [
+            bot.id,
+            name.trim(),
+            description || null,
+            is_default,
+            adminEmail || null,
+          ],
         );
         return res.status(201).json({ success: true, segment: rows[0] });
       } catch (err) {
-        if (err.code === "23505") return res.status(409).json({ error: "ชื่อ segment นี้มีอยู่แล้ว" });
+        if (err.code === "23505")
+          return res.status(409).json({ error: "ชื่อ segment นี้มีอยู่แล้ว" });
         console.error("[create_segment]", err.message, err.code);
         return res.status(500).json({ error: err.message, code: err.code });
       }
@@ -1068,23 +1102,39 @@ export default async function handler(req, res) {
     // ── update_segment ─────────────────────────────────────────
     if (action === "update_segment") {
       try {
-        const { segmentId, name, description, is_default, adminEmail } = req.body;
-        if (!segmentId) return res.status(400).json({ error: "segmentId is required" });
+        const { segmentId, name, description, is_default, adminEmail } =
+          req.body;
+        if (!segmentId)
+          return res.status(400).json({ error: "segmentId is required" });
         if (is_default) {
-          const { rows: s } = await query(`SELECT bot_id FROM richmenu_segments WHERE id = $1 LIMIT 1`, [segmentId]);
-          if (s[0]) await query(`UPDATE richmenu_segments SET is_default = false WHERE bot_id = $1`, [s[0].bot_id]);
+          const { rows: s } = await query(
+            `SELECT bot_id FROM richmenu_segments WHERE id = $1 LIMIT 1`,
+            [segmentId],
+          );
+          if (s[0])
+            await query(
+              `UPDATE richmenu_segments SET is_default = false WHERE bot_id = $1`,
+              [s[0].bot_id],
+            );
         }
         const { rows } = await query(
           `UPDATE richmenu_segments
            SET name = COALESCE($1, name), description = COALESCE($2, description),
                is_default = COALESCE($3, is_default), updated_at = NOW()
            WHERE id = $4 RETURNING *`,
-          [name?.trim() || null, description || null, is_default ?? null, segmentId]
+          [
+            name?.trim() || null,
+            description || null,
+            is_default ?? null,
+            segmentId,
+          ],
         );
-        if (!rows[0]) return res.status(404).json({ error: "Segment not found" });
+        if (!rows[0])
+          return res.status(404).json({ error: "Segment not found" });
         return res.status(200).json({ success: true, segment: rows[0] });
       } catch (err) {
-        if (err.code === "23505") return res.status(409).json({ error: "ชื่อ segment นี้มีอยู่แล้ว" });
+        if (err.code === "23505")
+          return res.status(409).json({ error: "ชื่อ segment นี้มีอยู่แล้ว" });
         console.error("[update_segment]", err);
         return res.status(500).json({ error: err.message });
       }
@@ -1094,8 +1144,12 @@ export default async function handler(req, res) {
     if (action === "delete_segment") {
       try {
         const { segmentId } = req.body;
-        if (!segmentId) return res.status(400).json({ error: "segmentId is required" });
-        await query(`UPDATE richmenu_segments SET is_active = false, updated_at = NOW() WHERE id = $1`, [segmentId]);
+        if (!segmentId)
+          return res.status(400).json({ error: "segmentId is required" });
+        await query(
+          `UPDATE richmenu_segments SET is_active = false, updated_at = NOW() WHERE id = $1`,
+          [segmentId],
+        );
         return res.status(200).json({ success: true });
       } catch (err) {
         console.error("[delete_segment]", err);
@@ -1106,52 +1160,68 @@ export default async function handler(req, res) {
     // ── assign_menu (segment) ──────────────────────────────────
     if (action === "assign_segment_menu") {
       try {
-        const { segmentId, richMenuId, richMenuName, botKey, adminEmail } = req.body;
+        const { segmentId, richMenuId, richMenuName, botKey, adminEmail } =
+          req.body;
         if (!segmentId || !richMenuId || !botKey) {
-          return res.status(400).json({ error: "segmentId, richMenuId, botKey are required" });
+          return res
+            .status(400)
+            .json({ error: "segmentId, richMenuId, botKey are required" });
         }
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
         const token = bot.channel_access_token;
         const { rows: segRows } = await query(
           `SELECT * FROM richmenu_segments WHERE id = $1 AND bot_id = $2 LIMIT 1`,
-          [segmentId, bot.id]
+          [segmentId, bot.id],
         );
-        if (!segRows[0]) return res.status(404).json({ error: "Segment not found" });
+        if (!segRows[0])
+          return res.status(404).json({ error: "Segment not found" });
         const segment = segRows[0];
 
         // deactivate menu เก่า
         await query(
           `UPDATE richmenu_segment_menus SET is_active = false, unassigned_at = NOW()
            WHERE segment_id = $1 AND is_active = true`,
-          [segmentId]
+          [segmentId],
         );
         // insert menu ใหม่
         await query(
           `INSERT INTO richmenu_segment_menus (segment_id, rich_menu_id, rich_menu_name, is_active, assigned_by)
            VALUES ($1, $2, $3, true, $4)`,
-          [segmentId, richMenuId, richMenuName || null, adminEmail || null]
+          [segmentId, richMenuId, richMenuName || null, adminEmail || null],
         );
 
         let lineResult = { linked: 0, failed: 0 };
 
         if (segment.is_default) {
           // set LINE default menu
-          await fetch(`https://api.line.me/v2/bot/user/all/richmenu/${richMenuId}`, {
-            method: "POST", headers: { Authorization: `Bearer ${token}` }
-          });
-          await query(`UPDATE bot_config SET active_rich_menu_id = $1 WHERE id = $2`, [richMenuId, bot.id]);
+          await fetch(
+            `https://api.line.me/v2/bot/user/all/richmenu/${richMenuId}`,
+            {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          );
+          await query(
+            `UPDATE bot_config SET active_rich_menu_id = $1 WHERE id = $2`,
+            [richMenuId, bot.id],
+          );
         } else {
           // link ทุก user ใน segment แบบ batch 10
           const { rows: userRows } = await query(
-            `SELECT line_user_id FROM richmenu_user_segments WHERE segment_id = $1`, [segmentId]
+            `SELECT line_user_id FROM richmenu_user_segments WHERE segment_id = $1`,
+            [segmentId],
           );
           const BATCH = 10;
           for (let i = 0; i < userRows.length; i += BATCH) {
             const results = await Promise.all(
-              userRows.slice(i, i + BATCH).map((u) => lineLink(token, richMenuId, u.line_user_id))
+              userRows
+                .slice(i, i + BATCH)
+                .map((u) => lineLink(token, richMenuId, u.line_user_id)),
             );
-            results.forEach((r) => r.ok ? lineResult.linked++ : lineResult.failed++);
+            results.forEach((r) =>
+              r.ok ? lineResult.linked++ : lineResult.failed++,
+            );
           }
         }
 
@@ -1185,7 +1255,9 @@ export default async function handler(req, res) {
       try {
         const { segmentId, botKey, users = [], adminEmail } = req.body;
         if (!segmentId || !botKey || !users.length) {
-          return res.status(400).json({ error: "segmentId, botKey, users[] are required" });
+          return res
+            .status(400)
+            .json({ error: "segmentId, botKey, users[] are required" });
         }
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
@@ -1194,7 +1266,7 @@ export default async function handler(req, res) {
         // active menu ของ segment นี้
         const { rows: menuRows } = await query(
           `SELECT rich_menu_id FROM richmenu_segment_menus WHERE segment_id = $1 AND is_active = true LIMIT 1`,
-          [segmentId]
+          [segmentId],
         );
         const activeMenuId = menuRows[0]?.rich_menu_id || null;
         const result = { added: 0, failed: 0, errors: [] };
@@ -1210,11 +1282,13 @@ export default async function handler(req, res) {
                DO UPDATE SET segment_id = EXCLUDED.segment_id,
                              display_name = COALESCE(EXCLUDED.display_name, richmenu_user_segments.display_name),
                              created_at = NOW()`,
-              [bot.id, segmentId, lineUserId, displayName || null]
+              [bot.id, segmentId, lineUserId, displayName || null],
             );
             if (activeMenuId) {
               const r = await lineLink(token, activeMenuId, lineUserId);
-              r.ok ? result.added++ : result.errors.push(`${lineUserId}: ${r.status}`);
+              r.ok
+                ? result.added++
+                : result.errors.push(`${lineUserId}: ${r.status}`);
             } else {
               result.added++;
             }
@@ -1223,7 +1297,14 @@ export default async function handler(req, res) {
             result.errors.push(`${lineUserId}: ${e.message}`);
           }
         }
-        return res.status(200).json({ success: true, message: `เพิ่ม ${result.added} user สำเร็จ`, result });
+        return res.status(200).json({
+          success: true,
+          message: activeMenuId
+            ? `เพิ่ม ${result.added} user สำเร็จ และ link เมนูแล้ว`
+            : `เพิ่ม ${result.added} user สำเร็จ แต่ segment นี้ยังไม่มีเมนู — กด "Assign เมนู" เพื่อส่งเมนูให้ users`,
+          has_menu: !!activeMenuId,
+          result,
+        });
       } catch (err) {
         console.error("[add_segment_users]", err);
         return res.status(500).json({ error: err.message });
@@ -1235,16 +1316,20 @@ export default async function handler(req, res) {
       try {
         const { segmentId, botKey, lineUserId } = req.body;
         if (!segmentId || !botKey || !lineUserId) {
-          return res.status(400).json({ error: "segmentId, botKey, lineUserId are required" });
+          return res
+            .status(400)
+            .json({ error: "segmentId, botKey, lineUserId are required" });
         }
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
         await query(
           `DELETE FROM richmenu_user_segments WHERE bot_id = $1 AND segment_id = $2 AND line_user_id = $3`,
-          [bot.id, segmentId, lineUserId]
+          [bot.id, segmentId, lineUserId],
         );
         await lineUnlink(bot.channel_access_token, lineUserId);
-        return res.status(200).json({ success: true, message: "ลบ user สำเร็จ" });
+        return res
+          .status(200)
+          .json({ success: true, message: "ลบ user สำเร็จ" });
       } catch (err) {
         console.error("[remove_segment_user]", err);
         return res.status(500).json({ error: err.message });
@@ -1256,7 +1341,9 @@ export default async function handler(req, res) {
       try {
         const { botKey, lineUserId, toSegmentId } = req.body;
         if (!botKey || !lineUserId || !toSegmentId) {
-          return res.status(400).json({ error: "botKey, lineUserId, toSegmentId are required" });
+          return res
+            .status(400)
+            .json({ error: "botKey, lineUserId, toSegmentId are required" });
         }
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
@@ -1265,21 +1352,25 @@ export default async function handler(req, res) {
           `SELECT rsm.rich_menu_id FROM richmenu_segment_menus rsm
            JOIN richmenu_segments s ON s.id = rsm.segment_id
            WHERE rsm.segment_id = $1 AND rsm.is_active = true AND s.bot_id = $2 LIMIT 1`,
-          [toSegmentId, bot.id]
+          [toSegmentId, bot.id],
         );
         const newMenuId = menuRows[0]?.rich_menu_id || null;
         await query(
           `INSERT INTO richmenu_user_segments (bot_id, segment_id, line_user_id, source)
            VALUES ($1, $2, $3, 'admin')
            ON CONFLICT (bot_id, line_user_id) DO UPDATE SET segment_id = EXCLUDED.segment_id, created_at = NOW()`,
-          [bot.id, toSegmentId, lineUserId]
+          [bot.id, toSegmentId, lineUserId],
         );
         let lineStatus = "no_menu";
         if (newMenuId) {
           const r = await lineLink(token, newMenuId, lineUserId);
           lineStatus = r.ok ? "linked" : `failed:${r.status}`;
         }
-        return res.status(200).json({ success: true, message: "ย้าย user สำเร็จ", line: { status: lineStatus, rich_menu_id: newMenuId } });
+        return res.status(200).json({
+          success: true,
+          message: "ย้าย user สำเร็จ",
+          line: { status: lineStatus, rich_menu_id: newMenuId },
+        });
       } catch (err) {
         console.error("[move_segment_user]", err);
         return res.status(500).json({ error: err.message });
