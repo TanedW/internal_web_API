@@ -224,7 +224,7 @@ async function updateRichMenus(botId, newMenus) {
 
 async function lineLink(token, richMenuId, lineUserId) {
   const res = await fetch(
-    `https://api.line.me/v2/bot/richmenu/${richMenuId}/users/${lineUserId}`,
+    `https://api.line.me/v2/bot/user/${lineUserId}/richmenu/${richMenuId}`, // ✅ ถูกต้องตาม LINE API
     { method: "POST", headers: { Authorization: `Bearer ${token}` } },
   );
   return { ok: res.ok, status: res.status };
@@ -232,7 +232,7 @@ async function lineLink(token, richMenuId, lineUserId) {
 
 async function lineUnlink(token, lineUserId) {
   const res = await fetch(
-    `https://api.line.me/v2/bot/richmenu/users/${lineUserId}`,
+    `https://api.line.me/v2/bot/user/${lineUserId}/richmenu`, // ✅ ถูกต้องตาม LINE API
     { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
   );
   return { ok: res.ok, status: res.status };
