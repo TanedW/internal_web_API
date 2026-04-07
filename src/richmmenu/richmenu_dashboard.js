@@ -629,7 +629,7 @@ export default async function handler(req, res) {
           return res.status(404).json({ error: "Segment not found" });
         const { rows: menuRows } = await query(
           `SELECT id, rich_menu_id, rich_menu_name, is_active, assigned_by, assigned_at, unassigned_at
-           FROM richmenu_segment_menus WHERE segment_id = $1 ORDER BY assigned_at DESC`,
+           FROM richmenu_segment_menus WHERE segment_id = $1 ORDER BY assigned_at ASC`,
           [segmentId],
         );
         const { rows: userRows } = await query(
