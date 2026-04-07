@@ -1160,7 +1160,7 @@ export default async function handler(req, res) {
     // ── assign_menu (segment) ──────────────────────────────────
     if (action === "assign_segment_menu") {
       try {
-        const { segmentId, richMenuId, richMenuName, botKey, adminEmail } =
+        const { segmentId, richMenuId, richMenuName, botKey, adminEmail, add_mode = false } =
           req.body;
         if (!segmentId || !richMenuId || !botKey) {
           return res
@@ -1178,12 +1178,14 @@ export default async function handler(req, res) {
           return res.status(404).json({ error: "Segment not found" });
         const segment = segRows[0];
 
-        // deactivate menu เก่า
-        await query(
-          `UPDATE richmenu_segment_menus SET is_active = false, unassigned_at = NOW()
-           WHERE segment_id = $1 AND is_active = true`,
-          [segmentId],
-        );
+        // deactivate menu เก่า (เฉพาะ replace mode, ไม่ทำถ้าเป็น add_mode)
+        if (!add_mode) {
+          await query(
+            `UPDATE richmenu_segment_menus SET is_active = false, unassigned_at = NOW()
+             WHERE segment_id = $1 AND is_active = true`,
+            [segmentId],
+          );
+        }
         // insert menu ใหม่
         await query(
           `INSERT INTO richmenu_segment_menus (segment_id, rich_menu_id, rich_menu_name, is_active, assigned_by)
@@ -1246,6 +1248,41 @@ export default async function handler(req, res) {
         });
       } catch (err) {
         console.error("[assign_segment_menu]", err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // ── remove_segment_menu (ถอด menu ออกจาก segment) ───────────
+    if (action === "remove_segment_menu") {
+      try {
+        const { segmentId, menuEntryId, botKey, adminEmail } = req.body;
+        if (!segmentId || !menuEntryId || !botKey) {
+          return res.status(400).json({ error: "segmentId, menuEntryId, botKey are required" });
+        }
+        const bot = await getBotConfig(botKey);
+        if (!bot) return res.status(404).json({ error: "Bot not found" });
+
+        // Soft-deactivate เฉพาะ entry นั้น
+        await query(
+          `UPDATE richmenu_segment_menus SET is_active = false, unassigned_at = NOW()
+           WHERE id = $1 AND segment_id = $2`,
+          [menuEntryId, segmentId],
+        );
+
+        await saveAuditLog({
+          admin: await getAdminByEmail(adminEmail),
+          action: "SEGMENT_REMOVE_MENU",
+          bot_key: botKey,
+          bot_name: bot.nickname,
+          menu_id_from: menuEntryId,
+          detail: `ถอดเมนูออกจาก segment id=${segmentId}`,
+          ipAddress,
+          userAgent,
+        });
+
+        return res.status(200).json({ success: true, message: "ถอดเมนูออกจากพื้นที่สำเร็จ" });
+      } catch (err) {
+        console.error("[remove_segment_menu]", err);
         return res.status(500).json({ error: err.message });
       }
     }
