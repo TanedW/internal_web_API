@@ -583,16 +583,24 @@ export default async function handler(req, res) {
         const bot = await getBotConfig(botKey);
         if (!bot) return res.status(404).json({ error: "Bot not found" });
         const { rows } = await query(
-          `SELECT s.id, s.name, s.description, s.is_default, s.is_active, s.created_at,
-                  rsm.rich_menu_id AS active_rich_menu_id,
-                  rsm.rich_menu_name AS active_rich_menu_name,
-                  rsm.assigned_at AS menu_assigned_at,
-                  COUNT(rus.id)::int AS user_count
+          `SELECT
+             s.id, s.name, s.description, s.is_default, s.is_active, s.created_at,
+             -- จำนวน active menus ใน segment นี้
+             (SELECT COUNT(*)::int FROM richmenu_segment_menus
+              WHERE segment_id = s.id AND is_active = true) AS active_menu_count,
+             -- active menu ล่าสุด (สำหรับแสดงภาพตัวอย่างใน header)
+             (SELECT rich_menu_id FROM richmenu_segment_menus
+              WHERE segment_id = s.id AND is_active = true
+              ORDER BY assigned_at DESC LIMIT 1) AS active_rich_menu_id,
+             (SELECT rich_menu_name FROM richmenu_segment_menus
+              WHERE segment_id = s.id AND is_active = true
+              ORDER BY assigned_at DESC LIMIT 1) AS active_rich_menu_name,
+             -- จำนวน users
+             COUNT(DISTINCT rus.id)::int AS user_count
            FROM richmenu_segments s
-           LEFT JOIN richmenu_segment_menus rsm ON rsm.segment_id = s.id AND rsm.is_active = true
            LEFT JOIN richmenu_user_segments rus ON rus.segment_id = s.id
            WHERE s.bot_id = $1 AND s.is_active = true
-           GROUP BY s.id, rsm.rich_menu_id, rsm.rich_menu_name, rsm.assigned_at
+           GROUP BY s.id
            ORDER BY s.is_default DESC, s.created_at ASC`,
           [bot.id],
         );
