@@ -585,18 +585,25 @@ export default async function handler(req, res) {
         const { rows } = await query(
           `SELECT
              s.id, s.name, s.description, s.is_default, s.is_active, s.created_at,
-             -- จำนวน active menus ใน segment นี้
+             COUNT(DISTINCT rus.id)::int AS user_count,
+             -- จำนวน active menus
              (SELECT COUNT(*)::int FROM richmenu_segment_menus
               WHERE segment_id = s.id AND is_active = true) AS active_menu_count,
-             -- active menu ล่าสุด (สำหรับแสดงภาพตัวอย่างใน header)
-             (SELECT rich_menu_id FROM richmenu_segment_menus
-              WHERE segment_id = s.id AND is_active = true
-              ORDER BY assigned_at DESC LIMIT 1) AS active_rich_menu_id,
-             (SELECT rich_menu_name FROM richmenu_segment_menus
-              WHERE segment_id = s.id AND is_active = true
-              ORDER BY assigned_at DESC LIMIT 1) AS active_rich_menu_name,
-             -- จำนวน users
-             COUNT(DISTINCT rus.id)::int AS user_count
+             -- embed รายการ active menus ทั้งหมดเป็น JSON array (เรียงเก่า→ใหม่)
+             COALESCE(
+               (SELECT json_agg(
+                  json_build_object(
+                    'id',             rsm.id,
+                    'rich_menu_id',   rsm.rich_menu_id,
+                    'rich_menu_name', rsm.rich_menu_name,
+                    'is_active',      rsm.is_active,
+                    'assigned_at',    rsm.assigned_at
+                  ) ORDER BY rsm.assigned_at ASC
+                )
+                FROM richmenu_segment_menus rsm
+                WHERE rsm.segment_id = s.id AND rsm.is_active = true),
+               '[]'::json
+             ) AS active_menus
            FROM richmenu_segments s
            LEFT JOIN richmenu_user_segments rus ON rus.segment_id = s.id
            WHERE s.bot_id = $1 AND s.is_active = true
