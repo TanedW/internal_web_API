@@ -35,6 +35,8 @@ import proxysearchorgHandler from '../src/proxy-search-org/search-org.js';
 import checkSessionHandler from '../src/CheckSession.js';
 import getUserRolesHandler from '../src/GetUserRoles.js';
 import validatePushHandler from '../src/flex_message/validate-push.js';
+import searchOtpStatusHandler from '../src/otp/search_otp_status.js';
+import resetOtpStatusHandler from '../src/otp/reset_otp_status.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -151,6 +153,8 @@ app.all('/src/organization/manage_org', (req, res) => vercelAdapter(req, res, ma
 app.all('/src/organization/search_org', (req, res) => vercelAdapter(req, res, searchOrgHandler));
 app.all('/src/flex_message/manage_flex_message', (req, res) => vercelAdapter(req, res, manageFlexHandler));
 app.all('/src/GetAuditLogs', (req, res) => vercelAdapter(req, res, getAuditLogsHandler));
+app.all('/src/otp/search_otp_status', (req, res) => vercelAdapter(req, res, searchOtpStatusHandler));
+app.all('/src/otp/reset_otp_status', (req, res) => vercelAdapter(req, res, resetOtpStatusHandler));
 app.all('/src/richmmenu/richmenu_home', (req, res) => vercelAdapter(req, res, richmenuHandler));
 app.all('/src/proxy-search-org/search-org', (req, res) => vercelAdapter(req, res, proxysearchorgHandler));
 app.all('/src/richmmenu/richmenu_dashboard', (req, res, next) => {
