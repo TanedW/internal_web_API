@@ -44,7 +44,7 @@ export default async function handler(req, res) {
 
     // --- เพิ่ม Logic สำหรับกำหนดสถานะ ---
     const result = otpData[0];
-    const status = result.counter_consecutive_fail >= 3 ? 'blocked' : 'active';
+    const status = result.counter_consecutive_fail >= 3 ? 'locked' : 'active';
 
     return res.status(200).json({ 
       success: true, 
