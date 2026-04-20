@@ -77,45 +77,122 @@ export default async function handler(req, res) {
     const ticketId = caseRes.rows[0].ticket_id; // ใช้ตัวนี้เป็น target_id ใน External Log
 
     // --- METHOD: POST (อัปโหลดรูปใหม่เพื่อ "แทนที่" รูปเดิม) ---
+// --- METHOD: POST (อัปเดตเขียนทับข้อมูลรูปเดิมใน ID นั้นๆ) ---
 if (req.method === 'POST') {
   try {
     const { 
       current_admin_id, 
-      photo_id, 
-      file_url,      // URL ใหม่
-      old_url,       // รับ URL เก่าเพิ่มเข้ามา
+      photo_id,      // ID เดิมในตาราง voice_attachment ที่ต้องการเขียนทับ
+      file_url,      // URL รูปภาพใหม่ (photo_link จากหน้าบ้าน)
+      old_url,       // URL รูปภาพเดิมก่อนถูกเปลี่ยน (ส่งมาจากหน้าบ้าน)
       description, 
+      viewed, 
+      is_hidden, 
       is_cover 
     } = req.body;
 
-    // ... (โค้.ดดึงข้อมูล Admin และ Ticket ID เหมือนเดิม) ...
+    // Validation เบื้องต้น
+    if (!photo_id) return res.status(400).json({ message: 'Missing photo_id for replacement' });
+    if (!file_url) return res.status(400).json({ message: 'Missing file_url' });
 
-    // STEP: UPDATE เขียนทับใน DB
+    // 1. ดึงข้อมูล Admin และ ticket_id (จาก voice_message) เพื่อใช้ทำ External Log
+    const [adminRes, caseRes] = await Promise.all([
+      query('SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = $1', [current_admin_id]),
+      query('SELECT ticket_id FROM voice_message WHERE id = $1', [case_id])
+    ]);
+
+    if (adminRes.rows.length === 0) return res.status(403).json({ message: 'Unauthorized' });
+    if (caseRes.rows.length === 0) return res.status(404).json({ message: 'Case not found' });
+
+    const actorAdmin = adminRes.rows[0];
+    const ticketId = caseRes.rows[0].ticket_id;
+    const actorName = `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''}`.trim();
+
+    // 2. Logic จัดการ Case Cover
+    // หากรูปใหม่นี้ถูกตั้งเป็น Cover ให้ปลดรูปอื่นๆ ใน Case นี้จากการเป็น Cover ก่อน
+    if (is_cover === true) {
+      await query(`
+        UPDATE voice_attachment 
+        SET is_cover = false
+        WHERE id IN (SELECT attachment_id FROM voice_message_photos WHERE message_id = $1)
+      `, [case_id]);
+    }
+
+    // 3. EXECUTE UPDATE: เขียนทับข้อมูลในแถวเดิม (Overwrite)
     const { rows: updatedAttachment } = await query(`
         UPDATE voice_attachment 
-        SET photo = $1, note = $2, updated_on = NOW(), is_cover = $3
-        WHERE id = $4 
+        SET 
+          photo = $1, 
+          viewed = $2, 
+          note = $3, 
+          status = 'active', 
+          is_hidden = $4, 
+          is_cover = $5, 
+          updated_on = NOW()
+        WHERE id = $6 
+        AND id IN (SELECT attachment_id FROM voice_message_photos WHERE message_id = $7)
         RETURNING id, photo;
-    `, [file_url, description, is_cover, photo_id]);
+    `, [
+      file_url, 
+      viewed || 0, 
+      description || null, 
+      is_hidden || false, 
+      is_cover || false, 
+      photo_id, 
+      case_id
+    ]);
 
-    // --- ส่วนการส่ง Log: เพิ่ม old_url ลงใน payload ---
-    sendExternalLog({
-      actor_id: String(current_admin_id),
-      target_id: String(ticketId), 
-      action: 'UPDATE_PICTURE_INFO_CASE',
-      reason: description,
+    if (updatedAttachment.length === 0) {
+      return res.status(404).json({ message: 'Target photo ID not found in this case' });
+    }
+
+    const actionType = 'UPDATE_PICTURE_INFO_CASE';
+
+    // 4. External Log: บันทึกประวัติการเปลี่ยนรูป (เก็บทั้ง URL เก่าและใหม่)
+    await sendExternalLog({
+      actor_id: String(actorAdmin.admin_id),
+      actor_type: "ADMIN",
+      actor_name: actorName,
+      source_channel: "Internal Portal",
+      target_id: String(ticketId), // ใช้ ticket_id เป็นหลักตาม Schema
+      action: actionType,
+      reason: description || "Overwrite existing photo content",
       payload: { 
           attachment_id: photo_id, 
           new_url: file_url, 
-          old_url: old_url, // บันทึก URL เก่าลงใน Log
-          action_detail: "overwrite_existing_photo"
+          old_url: old_url || "N/A", // เก็บ URL เดิมไว้ดูย้อนหลัง
+          action_performed: "permanent_overwrite",
+          internal_case_uuid: case_id 
       },
       client_ip: ipAddress,
       user_agent: userAgent
     });
 
+    // 5. Internal Audit Log: บันทึกลงระบบภายใน
+    await saveAdminLog({
+      adminId: actorAdmin.admin_id, 
+      email: actorAdmin.email, 
+      first_name: actorAdmin.first_name, 
+      last_name: actorAdmin.last_name,
+      action_type: actionType, 
+      status: 'SUCCESS', 
+      ipAddress, 
+      userAgent,
+      details: { 
+        case_id, 
+        ticket_id: ticketId, 
+        attachment_id: photo_id, 
+        new_url: file_url, 
+        old_url: old_url 
+      }
+    });
+
     return res.status(200).json({ success: true, data: updatedAttachment[0] });
-  } catch (error) { /* ... */ }
+
+  } catch (error) {
+    console.error("POST Overwrite Error:", error);
+    return res.status(500).json({ error: error.message });
+  }
 }
     // --- METHOD: PUT (Update Info / Cover / Hidden / Reactive) ---
     if (req.method === 'PUT') {
