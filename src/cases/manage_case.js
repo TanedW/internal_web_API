@@ -158,11 +158,13 @@ if (req.method === 'POST') {
       action: actionType,
       reason: description || "Overwrite existing photo content",
       payload: { 
-          attachment_id: photo_id, 
-          new_url: file_url, 
+          update_data:{
+            new_url: file_url, 
           old_url: old_url || "N/A", // เก็บ URL เดิมไว้ดูย้อนหลัง
-          action_performed: "permanent_overwrite",
-          internal_case_uuid: case_id 
+          },
+            attachment_id: photo_id, 
+            action_performed: "permanent_overwrite",
+            internal_case_uuid: case_id 
       },
       client_ip: ipAddress,
       user_agent: userAgent
