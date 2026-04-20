@@ -78,47 +78,97 @@ export default async function handler(req, res) {
 
     // --- METHOD: POST (อัปโหลดรูปใหม่เพื่อ "แทนที่" รูปเดิม) ---
 // --- ในไฟล์ manage_case.js (ส่วน POST) ---
+// --- METHOD: POST (อัปเดตเขียนทับรูปเดิมใน ID นั้นๆ) ---
 if (req.method === 'POST') {
-  const { current_admin_id, old_photo_id, file_url, description, is_cover } = req.body;
+  try {
+    const { 
+      current_admin_id, 
+      photo_id,      // ID เดิมใน voice_attachment ที่ต้องการเขียนทับ
+      file_url,      // URL รูปใหม่
+      description, 
+      viewed, 
+      is_hidden, 
+      is_cover 
+    } = req.body;
 
-  // 1. ดึง ticket_id เพื่อทำ Log
-  const [adminRes, caseRes] = await Promise.all([
-    query('SELECT admin_id, first_name, last_name FROM admin_system WHERE admin_id = $1', [current_admin_id]),
-    query('SELECT ticket_id FROM voice_message WHERE id = $1', [case_id])
-  ]);
+    if (!photo_id) return res.status(400).json({ message: 'Missing photo_id for replacement' });
+    if (!file_url) return res.status(400).json({ message: 'Missing file_url' });
 
-  const ticketId = caseRes.rows[0]?.ticket_id;
+    // 1. ดึงข้อมูล Admin และ ticket_id (สำหรับ Log)
+    const [adminRes, caseRes] = await Promise.all([
+      query('SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = $1', [current_admin_id]),
+      query('SELECT ticket_id FROM voice_message WHERE id = $1', [case_id])
+    ]);
 
-  // STEP 1: แทนที่รูปเก่า (ถ้ามี old_photo_id ส่งมา)
-  if (old_photo_id) {
-    await query(`
-      UPDATE voice_attachment 
-      SET status = 'inactive', updated_on = NOW() 
-      WHERE id = $1
-    `, [old_photo_id]);
+    if (adminRes.rows.length === 0) return res.status(403).json({ message: 'Unauthorized' });
+    if (caseRes.rows.length === 0) return res.status(404).json({ message: 'Case not found' });
+
+    const actorAdmin = adminRes.rows[0];
+    const ticketId = caseRes.rows[0].ticket_id;
+
+    // STEP 1: ถ้ามีการตั้งเป็น Cover ให้ปลดรูปอื่นใน Case นี้ก่อน
+    if (is_cover === true) {
+      await query(`
+        UPDATE voice_attachment SET is_cover = false
+        WHERE id IN (SELECT attachment_id FROM voice_message_photos WHERE message_id = $1)
+      `, [case_id]);
+    }
+
+    // STEP 2: UPDATE เขียนทับข้อมูลใน ID เดิม (แทนการ INSERT)
+    const { rows: updatedAttachment } = await query(`
+        UPDATE voice_attachment 
+        SET 
+          photo = $1, 
+          viewed = $2, 
+          note = $3, 
+          status = 'active', 
+          is_hidden = $4, 
+          is_cover = $5, 
+          updated_on = NOW()
+        WHERE id = $6 
+        AND id IN (SELECT attachment_id FROM voice_message_photos WHERE message_id = $7)
+        RETURNING id, photo;
+    `, [file_url, viewed || 0, description || null, is_hidden || false, is_cover || false, photo_id, case_id]);
+
+    if (updatedAttachment.length === 0) {
+      return res.status(404).json({ message: 'Target photo ID not found in this case' });
+    }
+
+    const actionType = 'UPDATE_PICTURE_INFO_CASE';
+
+    // External Log (target_id = ticket_id)
+    await sendExternalLog({
+      actor_id: String(actorAdmin.admin_id),
+      actor_type: "ADMIN",
+      actor_name: `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''}`.trim(),
+      source_channel: "Internal Portal",
+      target_id: String(ticketId), 
+      action: actionType,
+      reason: description || "Overwrite existing photo content",
+      payload: { 
+          attachment_id: photo_id, 
+          new_url: file_url, 
+          internal_case_uuid: case_id 
+      },
+      client_ip: ipAddress,
+      user_agent: userAgent
+    });
+
+    // Internal Audit Log
+    await saveAdminLog({
+      adminId: actorAdmin.admin_id, email: actorAdmin.email, 
+      first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
+      action_type: actionType, status: 'SUCCESS', ipAddress, userAgent,
+      details: { case_id, ticket_id: ticketId, attachment_id: photo_id, action: 'overwrite' }
+    });
+
+    return res.status(200).json({ success: true, data: updatedAttachment[0] });
+
+  } catch (error) {
+    console.error("POST Overwrite Error:", error);
+    return res.status(500).json({ error: error.message });
   }
-
-  // STEP 2: เพิ่มรูปใหม่เข้าไปเป็น 'active'
-  const { rows: newAttachment } = await query(`
-    INSERT INTO voice_attachment (photo, status, note, updated_on, is_cover)
-    VALUES ($1, 'active', $2, NOW(), $3) RETURNING id, photo;
-  `, [file_url, description, is_cover || false]);
-
-  // STEP 3: ผูกรูปใหม่กับ Case เดิม
-  await query(`INSERT INTO voice_message_photos (message_id, attachment_id) VALUES ($1, $2)`, [case_id, newAttachment[0].id]);
-
-  // ส่ง External Log (target_id = ticket_id)
-  sendExternalLog({
-    actor_id: String(current_admin_id),
-    target_id: String(ticketId),
-    action: "UPDATE_PICTURE_INFO_CASE",
-    payload: { old_id: old_photo_id, new_id: newAttachment[0].id, url: file_url }
-    // ... ค่าอื่นๆ ตาม format
-  });
-
-  return res.status(201).json({ success: true, data: newAttachment[0] });
 }
-
     // --- METHOD: PUT (Update Info / Cover / Hidden / Reactive) ---
     if (req.method === 'PUT') {
       if (!photo_id) return res.status(400).json({ message: 'Missing photo_id' });
