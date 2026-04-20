@@ -77,82 +77,46 @@ export default async function handler(req, res) {
     const ticketId = caseRes.rows[0].ticket_id; // ใช้ตัวนี้เป็น target_id ใน External Log
 
     // --- METHOD: POST (อัปโหลดรูปใหม่เพื่อ "แทนที่" รูปเดิม) ---
+// --- ในไฟล์ manage_case.js (ส่วน POST) ---
 if (req.method === 'POST') {
-  try {
-    const { 
-      current_admin_id, old_photo_id, file_url, description, 
-      viewed, is_hidden, is_cover 
-    } = req.body;
+  const { current_admin_id, old_photo_id, file_url, description, is_cover } = req.body;
 
-    if (!file_url) return res.status(400).json({ message: 'Missing file_url' });
+  // 1. ดึง ticket_id เพื่อทำ Log
+  const [adminRes, caseRes] = await Promise.all([
+    query('SELECT admin_id, first_name, last_name FROM admin_system WHERE admin_id = $1', [current_admin_id]),
+    query('SELECT ticket_id FROM voice_message WHERE id = $1', [case_id])
+  ]);
 
-    // 1. ดึงข้อมูล Admin และ ticket_id จากตาราง voice_message พร้อมกัน
-    const [adminRes, caseRes] = await Promise.all([
-      query('SELECT admin_id, email, first_name, last_name FROM admin_system WHERE admin_id = $1', [current_admin_id]),
-      query('SELECT ticket_id FROM voice_message WHERE id = $1', [case_id])
-    ]);
+  const ticketId = caseRes.rows[0]?.ticket_id;
 
-    if (adminRes.rows.length === 0) return res.status(403).json({ message: 'Unauthorized' });
-    if (caseRes.rows.length === 0) return res.status(404).json({ message: 'Case not found' });
-
-    const actorAdmin = adminRes.rows[0];
-    const actorName = `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''}`.trim();
-    const ticketId = caseRes.rows[0].ticket_id;
-
-    // STEP 1: ถ้ามีการส่ง old_photo_id มา ให้สั่งปิดการใช้งานรูปเก่า (Soft Delete)
-    if (old_photo_id) {
-      await query(`
-        UPDATE voice_attachment 
-        SET status = 'inactive', updated_on = NOW() 
-        WHERE id = $1 
-        AND id IN (SELECT attachment_id FROM voice_message_photos WHERE message_id = $2)
-      `, [old_photo_id, case_id]);
-    }
-
-    // STEP 2: INSERT ข้อมูลรูปใหม่ลงใน voice_attachment
-    const { rows: newAttachment } = await query(`
-        INSERT INTO voice_attachment (photo, viewed, note, updated_on, status, is_hidden, is_cover)
-        VALUES ($1, $2, $3, NOW(), 'active', $4, $5) RETURNING id, photo;
-    `, [file_url, viewed || 0, description || null, is_hidden || false, is_cover || false]);
-
-    // STEP 3: ผูกรูปใหม่เข้ากับเคสใน voice_message_photos
-    await query(`INSERT INTO voice_message_photos (message_id, attachment_id) VALUES ($1, $2);`, [case_id, newAttachment[0].id]);
-    
-    const actionType = 'UPDATE_PICTURE_INFO_CASE';
-
-    // ส่ง Log ไปยัง External API (ใช้ ticketId เป็น target_id)
-    await sendExternalLog({
-      actor_id: String(actorAdmin.admin_id),
-      actor_type: "ADMIN",
-      actor_name: actorName,
-      source_channel: "Internal Portal",
-      target_id: String(ticketId), 
-      action: actionType,
-      reason: description || (old_photo_id ? `Replaced photo ID: ${old_photo_id}` : "Upload new photo"),
-      payload: { 
-          new_attachment_id: newAttachment[0].id, 
-          replaced_attachment_id: old_photo_id || null,
-          url: file_url,
-          internal_case_uuid: case_id 
-      },
-      client_ip: ipAddress,
-      user_agent: userAgent
-    });
-
-    // บันทึก Log ภายในระบบ
-    await saveAdminLog({
-      adminId: actorAdmin.admin_id, email: actorAdmin.email, 
-      first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
-      action_type: actionType, status: 'SUCCESS', ipAddress, userAgent,
-      details: { case_id, ticket_id: ticketId, new_id: newAttachment[0].id, replaced_id: old_photo_id }
-    });
-
-    return res.status(201).json({ success: true, data: newAttachment[0] });
-
-  } catch (error) {
-    console.error("POST API Error:", error);
-    return res.status(500).json({ error: error.message });
+  // STEP 1: แทนที่รูปเก่า (ถ้ามี old_photo_id ส่งมา)
+  if (old_photo_id) {
+    await query(`
+      UPDATE voice_attachment 
+      SET status = 'inactive', updated_on = NOW() 
+      WHERE id = $1
+    `, [old_photo_id]);
   }
+
+  // STEP 2: เพิ่มรูปใหม่เข้าไปเป็น 'active'
+  const { rows: newAttachment } = await query(`
+    INSERT INTO voice_attachment (photo, status, note, updated_on, is_cover)
+    VALUES ($1, 'active', $2, NOW(), $3) RETURNING id, photo;
+  `, [file_url, description, is_cover || false]);
+
+  // STEP 3: ผูกรูปใหม่กับ Case เดิม
+  await query(`INSERT INTO voice_message_photos (message_id, attachment_id) VALUES ($1, $2)`, [case_id, newAttachment[0].id]);
+
+  // ส่ง External Log (target_id = ticket_id)
+  sendExternalLog({
+    actor_id: String(current_admin_id),
+    target_id: String(ticketId),
+    action: "UPDATE_PICTURE_INFO_CASE",
+    payload: { old_id: old_photo_id, new_id: newAttachment[0].id, url: file_url }
+    // ... ค่าอื่นๆ ตาม format
+  });
+
+  return res.status(201).json({ success: true, data: newAttachment[0] });
 }
 
     // --- METHOD: PUT (Update Info / Cover / Hidden / Reactive) ---
