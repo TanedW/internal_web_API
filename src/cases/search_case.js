@@ -18,7 +18,7 @@ export default async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       if (!id) {
-        return res.status(400).json({ found: false, message: 'Ticket ID is required' });
+        return res.status(400).json({ found: false, message: 'ID or Ticket ID is required' });
       }
 
       // -----------------------------------------------------
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
           comment,
           timestamp
         FROM voice_message
-        WHERE ticket_id = $1
+        WHERE ticket_id = $1 OR id::text = $1
       `, [id]);
 
       if (cases.length === 0) {
