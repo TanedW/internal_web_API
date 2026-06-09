@@ -26,6 +26,7 @@ export default async function handler(req, res) {
           o.key AS phone, 
           o.counter_consecutive_fail, 
           o.counter_sent,
+          u.email,
           u.first_name,
           u.last_name,
           u.document_url
