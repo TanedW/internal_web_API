@@ -8,6 +8,22 @@ async function saveAdminLog({ adminId, email, first_name, last_name, action_type
   }, status === 'SUCCESS' ? 'INFO' : 'WARNING');
 }
 
+// --- Helper Function: ส่ง Log ไปยัง External API ---
+async function sendExternalLog(logData) {
+  try {
+    await fetch(process.env.LOGING_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.LOGING_JWT_TOKEN}`
+      },
+      body: JSON.stringify(logData)
+    });
+  } catch (error) {
+    console.error('External Logging API Error:', error);
+  }
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'PUT, OPTIONS',
@@ -77,6 +93,23 @@ export default async function handler(req, res) {
         ipAddress, 
         userAgent,
         details: { phone_key: key, reset_values: { fail: 0, sent: 0 } }
+      });
+
+      // --- External Log ---
+      sendExternalLog({
+        actor_id: String(actorAdmin.admin_id),
+        actor_type: "ADMIN",
+        actor_name: `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''}`.trim(),
+        source_channel: "Internal Portal",
+        target_id: String(key),
+        action: "RESET_OTP",
+        reason: null,
+        payload: {
+          phone_key: key,
+          reset_values: { counter_consecutive_fail: 0, counter_sent: 0 }
+        },
+        client_ip: ipAddress,
+        user_agent: userAgent
       });
 
       return res.status(200).json({ success: true, data: updatedOtp[0] });
