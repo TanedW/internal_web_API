@@ -79,7 +79,7 @@ export default async function handler(req, res) {
       `, [group_id]);
 
       // --- External Log (DELETE) ---
-      sendExternalLog({
+      await sendExternalLog({
         actor_id: String(actorAdmin.admin_id),
         actor_type: "ADMIN",
         actor_name: `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''}`.trim(),
@@ -181,7 +181,7 @@ export default async function handler(req, res) {
       if (updatedGroup.length === 0) return res.status(404).json({ message: 'Group not found' });
 
       // --- External Log (PUT) ---
-      sendExternalLog({
+      await sendExternalLog({
         actor_id: String(actorAdmin.admin_id),
         actor_type: "ADMIN",
         actor_name: `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''}`.trim(),

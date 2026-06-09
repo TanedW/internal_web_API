@@ -4,7 +4,7 @@ import { writeAuditLog } from '../lib/logging.js';
 // --- Helper Functions ---
 async function sendExternalLog(logData) {
   try {
-    await fetch(process.env.LOGING_API, {
+    const response = await fetch(process.env.LOGING_API, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -12,6 +12,9 @@ async function sendExternalLog(logData) {
       },
       body: JSON.stringify(logData)
     });
+    if (!response.ok) {
+      console.error('Failed to send external log:', await response.text());
+    }
   } catch (error) {
     console.error('External Logging API Error:', error);
   }

@@ -293,7 +293,7 @@ if (req.method === 'POST') {
     user_agent: userAgent
   };
 
-  sendExternalLog(externalLogPayload);
+  await sendExternalLog(externalLogPayload);
 
   // บันทึก Log ภายในระบบ (เรียกใช้ฟังก์ชันเดิมเพื่อรักษา Audit Trail ภายใน)
   if (actorAdmin) {
@@ -416,7 +416,7 @@ if (req.method === 'PUT') {
     user_agent: userAgent
   };
 
-  sendExternalLog(externalLogPayload);
+  await sendExternalLog(externalLogPayload);
 
   // 9. บันทึก Audit Log ภายใน
   if (actorAdmin) {
@@ -504,7 +504,7 @@ if (req.method === 'DELETE') {
             client_ip: ipAddress,
             user_agent: userAgent
         };
-        sendExternalLog(externalLogPayload);
+        await sendExternalLog(externalLogPayload);
 
         // 6. บันทึก Audit Log ภายในระบบ
         await saveAdminLog({

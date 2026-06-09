@@ -96,7 +96,7 @@ export default async function handler(req, res) {
       });
 
       // --- External Log ---
-      sendExternalLog({
+      await sendExternalLog({
         actor_id: String(actorAdmin.admin_id),
         actor_type: "ADMIN",
         actor_name: `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''}`.trim(),
