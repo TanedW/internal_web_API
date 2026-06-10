@@ -37,6 +37,9 @@ import getUserRolesHandler from '../src/GetUserRoles.js';
 import validatePushHandler from '../src/flex_message/validate-push.js';
 import searchOtpStatusHandler from '../src/otp/search_otp_status.js';
 import resetOtpStatusHandler from '../src/otp/reset_otp_status.js';
+import richmenuStatsHandler  from '../src/richmmenu/richmenu_stats.js';
+import richmenuImageHandler   from '../src/richmmenu/richmenu_image.js';
+import richmenuWebhookHandler from '../src/richmmenu/richmenu_webhook.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -157,6 +160,14 @@ app.all('/src/otp/search_otp_status', (req, res) => vercelAdapter(req, res, sear
 app.all('/src/otp/reset_otp_status', (req, res) => vercelAdapter(req, res, resetOtpStatusHandler));
 app.all('/src/richmmenu/richmenu_home', (req, res) => vercelAdapter(req, res, richmenuHandler));
 app.all('/src/proxy-search-org/search-org', (req, res) => vercelAdapter(req, res, proxysearchorgHandler));
+app.get('/src/richmenu-stats', (req, res) => vercelAdapter(req, res, richmenuStatsHandler));
+
+app.get('/src/richmenu-stats/richmenu_image.js', (req, res) => {
+  req.query.richMenuId = req.params.richMenuId;
+  vercelAdapter(req, res, richmenuImageHandler);
+});
+
+app.post('/src/richmenu-stats/richmenu_webhook.js', (req, res) => vercelAdapter(req, res, richmenuWebhookHandler));
 app.all('/src/richmmenu/richmenu_dashboard', (req, res, next) => {
   const isUpload = req.method === 'POST' && req.query.action === 'upload';
   if (isUpload) {
