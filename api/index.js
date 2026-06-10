@@ -47,16 +47,9 @@ const PORT = process.env.PORT || 8080;
 // Multer for multipart/form-data (Rich Menu image uploads)
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Skip JSON body parsing for multipart/form-data so multer can read the stream
-// verify callback เก็บ raw buffer ไว้ใน req.rawBody เผื่อ fallback
-app.use((req, res, next) => {
-    const ct = req.headers['content-type'] || '';
-    if (ct.startsWith('multipart/form-data')) return next();
-    express.json({
-        verify: (req, _res, buf) => { req.rawBody = buf; }
-    })(req, res, next);
-});
-
+// ============================================================
+// ✅ 1. CORS ต้องมาก่อนทุกอย่าง
+// ============================================================
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
@@ -67,7 +60,25 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
 
-// Normalizing /internal_web_api/ for local testing if needed
+// ✅ 2. Handle OPTIONS preflight ทันที (ต้องอยู่หลัง cors())
+app.options('*', cors());
+
+// ============================================================
+// 3. Body Parser
+// Skip JSON body parsing for multipart/form-data so multer can read the stream
+// verify callback เก็บ raw buffer ไว้ใน req.rawBody เผื่อ fallback
+// ============================================================
+app.use((req, res, next) => {
+    const ct = req.headers['content-type'] || '';
+    if (ct.startsWith('multipart/form-data')) return next();
+    express.json({
+        verify: (req, _res, buf) => { req.rawBody = buf; }
+    })(req, res, next);
+});
+
+// ============================================================
+// 4. URL Normalizer — /internal_web_api/ → /src/
+// ============================================================
 app.use((req, res, next) => {
     if (req.url.startsWith('/internal_web_api/')) {
         req.url = req.url.replace('/internal_web_api/', '/src/');
@@ -198,6 +209,5 @@ process.on('SIGTERM', () => {
     process.exit(0);
   });
 });
-
 
 export default app;
