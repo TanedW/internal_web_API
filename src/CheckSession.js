@@ -2,15 +2,6 @@
 import * as db from './lib/db.js';
 
 export default async function handler(req, res) {
-  // 1. ตั้งค่า CORS (อ้างอิงตาม AdminList.js)
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
   // 2. ตอบกลับ OPTIONS Request (Preflight)
   if (req.method === 'OPTIONS') {
     return res.status(200).end();

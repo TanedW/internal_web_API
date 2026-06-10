@@ -25,16 +25,6 @@ async function saveLoginLog({ adminId, ipAddress, status, email, first_name, las
 }
 
 export default async function handler(req, res) {
-  // จัดการ CORS Headers สำหรับ Node.js Runtime
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  // จัดการ CORS Preflight
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
   if (req.method === 'POST') {
     // ดึง IP และ User Agent จาก Headers (Node.js style)
     const forwarded = req.headers['x-forwarded-for'];

@@ -10,15 +10,6 @@ const permit = new Permit({
 });
 
 export default async function handler(req, res) {
-  // --- 1. CORS & Headers Setup ---
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }

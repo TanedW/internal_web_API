@@ -1,14 +1,7 @@
 import { query } from '../lib/db.js';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
 export default async function handler(req, res) {
-  if (req.method === 'OPTIONS') return res.status(200).set(corsHeaders).end();
-  res.set(corsHeaders);
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   if (req.method !== 'GET') {
     return res.status(405).json({ message: 'Method Not Allowed' });

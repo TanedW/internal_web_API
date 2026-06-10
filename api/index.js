@@ -37,9 +37,9 @@ import getUserRolesHandler from '../src/GetUserRoles.js';
 import validatePushHandler from '../src/flex_message/validate-push.js';
 import searchOtpStatusHandler from '../src/otp/search_otp_status.js';
 import resetOtpStatusHandler from '../src/otp/reset_otp_status.js';
-import richmenuStatsHandler  from '../src/richmmenu/richmenu_stats.js';
-import richmenuImageHandler   from '../src/richmmenu/richmenu_image.js';
-import richmenuWebhookHandler from '../src/richmmenu/richmenu_webhook.js';
+import richmenuStatsHandler  from '../src/richmenu-stats/richmenu_stats.js';
+import richmenuImageHandler   from '../src/richmenu-stats/richmenu_image.js';
+import richmenuWebhookHandler from '../src/richmenu-stats/richmenu_webhook.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -163,7 +163,7 @@ app.all('/src/proxy-search-org/search-org', (req, res) => vercelAdapter(req, res
 app.get('/src/richmenu-stats', (req, res) => vercelAdapter(req, res, richmenuStatsHandler));
 
 app.get('/src/richmenu-stats/richmenu_image.js', (req, res) => {
-  req.query.richMenuId = req.params.richMenuId;
+  // Pass through to vercelAdapter, handler already reads from req.query
   vercelAdapter(req, res, richmenuImageHandler);
 });
 

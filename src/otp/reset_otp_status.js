@@ -24,19 +24,7 @@ async function sendExternalLog(logData) {
   }
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'PUT, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
 export default async function handler(req, res) {
-  // รองรับ OPTIONS สำหรับ CORS
-  if (req.method === 'OPTIONS') return res.status(200).set(corsHeaders).end();
-  
-  // ตั้งค่า CORS สำหรับทุก Response
-  res.set(corsHeaders);
-
   const forwarded = req.headers['x-forwarded-for'];
   const ipAddress = forwarded ? (typeof forwarded === 'string' ? forwarded.split(',')[0] : forwarded[0]) : null;
   const userAgent = req.headers['user-agent'] || null;

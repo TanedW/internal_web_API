@@ -20,12 +20,6 @@ async function saveAdminLog({ adminId, email, first_name, last_name, action_type
   }, status === 'SUCCESS' ? 'INFO' : 'WARNING');
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
