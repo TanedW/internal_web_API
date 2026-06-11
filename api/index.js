@@ -38,8 +38,6 @@ import validatePushHandler from '../src/flex_message/validate-push.js';
 import searchOtpStatusHandler from '../src/otp/search_otp_status.js';
 import resetOtpStatusHandler from '../src/otp/reset_otp_status.js';
 import richmenuStatsHandler  from '../src/richmenu-stats/richmenu_stats.js';
-import richmenuImageHandler   from '../src/richmenu-stats/richmenu_image.js';
-import richmenuWebhookHandler from '../src/richmenu-stats/richmenu_webhook.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -162,12 +160,6 @@ app.all('/src/richmmenu/richmenu_home', (req, res) => vercelAdapter(req, res, ri
 app.all('/src/proxy-search-org/search-org', (req, res) => vercelAdapter(req, res, proxysearchorgHandler));
 app.get('/src/richmenu-stats', (req, res) => vercelAdapter(req, res, richmenuStatsHandler));
 
-app.get('/src/richmenu-stats/richmenu_image.js', (req, res) => {
-  // Pass through to vercelAdapter, handler already reads from req.query
-  vercelAdapter(req, res, richmenuImageHandler);
-});
-
-app.post('/src/richmenu-stats/richmenu_webhook.js', (req, res) => vercelAdapter(req, res, richmenuWebhookHandler));
 app.all('/src/richmmenu/richmenu_dashboard', (req, res, next) => {
   const isUpload = req.method === 'POST' && req.query.action === 'upload';
   if (isUpload) {
