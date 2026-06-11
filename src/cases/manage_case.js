@@ -101,6 +101,7 @@ export default async function handler(req, res) {
         actor_id: String(actorAdmin.admin_id),
         actor_type: "ADMIN",
         actor_name: `${actorAdmin.first_name} ${actorAdmin.last_name}`,
+        source_channel: "Internal Portal",
         target_id: String(oldData.ticket_id),
         action: 'UPDATE_ATTACHMENT_FULL_PROPERTIES',
         payload: {
