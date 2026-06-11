@@ -1,14 +1,11 @@
-const express = require('express');
-const { Pool } = require('pg');
-const axios = require('axios');
-const cors = require('cors');
-require('dotenv').config();
-
-const app = express();
-const PORT = process.env.PORT || 8080;
+import pg from 'pg';
+const { Pool } = pg;
+import axios from 'axios';
+import dotenv from 'dotenv';
+dotenv.config();
 
 // ─────────────────────────────────────────────
-// Configuration (อ่านจาก .env ทั้งหมด — ห้ามฝัง token ในโค้ด)
+// Configuration
 // ─────────────────────────────────────────────
 const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
 const BOT_ID = process.env.LINE_BOT_ID || 'Uf8841bc6a36cb709b87582a536150e8d';
@@ -21,21 +18,17 @@ const pool = new Pool({
   database: process.env.DB_NAME,
 });
 
-// Middleware
-// ─────────────────────────────────────────────
-app.use(cors());
-app.use(express.json());
-
 // Sync State
 // ─────────────────────────────────────────────
 let isSyncing = false;
 let lastSyncTime = null;
 const SYNC_COOLDOWN_MS = 5 * 60 * 1000; // 5 นาที
 
+// ─────────────────────────────────────────────
 // Database Helpers
 // ─────────────────────────────────────────────
 
-/** upsert ข้อมูล rich menu ของ user — INSERT ถ้าไม่มี, UPDATE ถ้ามีอยู่แล้ว */
+/** upsert ข้อมูล rich menu ของ user */
 async function upsertUserRichMenu(botId, lineUserId, richMenuId) {
   await pool.query(
     `INSERT INTO app_data.bot_user_richmenus (bot_id, line_user_id, rich_menu_id, updated_at)
@@ -46,7 +39,7 @@ async function upsertUserRichMenu(botId, lineUserId, richMenuId) {
   );
 }
 
-/** query สถิติ rich menu จาก DB — group by bot + menu */
+/** query สถิติ rich menu จาก DB */
 async function fetchRichMenuStats() {
   const { rows } = await pool.query(`
     SELECT
@@ -62,6 +55,7 @@ async function fetchRichMenuStats() {
   return rows;
 }
 
+// ─────────────────────────────────────────────
 // LINE API Helpers
 // ─────────────────────────────────────────────
 
@@ -119,65 +113,59 @@ function syncDataFromLINE() {
   })();
 }
 
-// Routes
 // ─────────────────────────────────────────────
-
-// 1. Stats — GET /api/stats/richmenu
-app.get('/api/stats/richmenu', async (req, res) => {
-  syncDataFromLINE(); // เปิด sync พื้นหลัง (ไม่ await)
-  try {
-    const stats = await fetchRichMenuStats();
-    res.json(stats);
-  } catch (err) {
-    console.error('GetStats error:', err.message);
-    res.status(500).json({ message: 'Database error' });
-  }
-});
-
-// 2. Image Proxy — GET /api/richmenu/image/:id
-app.get('/api/richmenu/image/:id', async (req, res) => {
-  const { id } = req.params;
-
-  if (!id || id === 'default' || id === 'error') {
-    return res.status(404).json({ message: 'No image for default/error menu' });
-  }
-
-  try {
-    const { data, headers } = await axios.get(
-      `https://api-data.line.me/v2/bot/richmenu/${id}/content`,
-      {
-        headers: { Authorization: `Bearer ${LINE_ACCESS_TOKEN}` },
-        responseType: 'stream',
-      }
-    );
-    res.setHeader('Content-Type', headers['content-type'] || 'image/jpeg');
-    data.pipe(res); // stream ตรงไปให้ client — ไม่ buffer ทั้งไฟล์
-  } catch (err) {
-    res.status(404).json({ message: 'Image not found on LINE' });
-  }
-});
-
-// 3. Webhook — POST /api/webhook
-app.post('/api/webhook', async (req, res) => {
-  const { botId, lineUserId, richMenuId } = req.body || {};
-
-  if (!botId || !lineUserId || !richMenuId) {
-    return res.status(400).json({
-      message: 'Missing required fields: botId, lineUserId, richMenuId',
-    });
-  }
-
-  try {
-    await upsertUserRichMenu(botId, lineUserId, richMenuId);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Webhook DB error:', err.message);
-    res.status(500).json({ message: 'Database error' });
-  }
-});
-
-// Start
+// ✅ Export default handler (ใช้กับ vercelAdapter ใน index.js)
 // ─────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`Rich Menu Backend running at http://localhost:${PORT}`);
-});
+export default async function richmenuStatsHandler(req, res) {
+  const method = req.method?.toUpperCase();
+
+  // GET /src/richmenu-stats — ดึงสถิติ
+  if (method === 'GET') {
+    syncDataFromLINE(); // fire-and-forget background sync
+    try {
+      const stats = await fetchRichMenuStats();
+      return new Response(JSON.stringify(stats), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      console.error('GetStats error:', err.message);
+      return new Response(JSON.stringify({ message: 'Database error' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
+  // POST /src/richmenu-stats/webhook — รับ webhook update
+  if (method === 'POST') {
+    const body = await req.json();
+    const { botId, lineUserId, richMenuId } = body || {};
+
+    if (!botId || !lineUserId || !richMenuId) {
+      return new Response(
+        JSON.stringify({ message: 'Missing required fields: botId, lineUserId, richMenuId' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    try {
+      await upsertUserRichMenu(botId, lineUserId, richMenuId);
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      console.error('Webhook DB error:', err.message);
+      return new Response(JSON.stringify({ message: 'Database error' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
+  return new Response(JSON.stringify({ message: 'Method Not Allowed' }), {
+    status: 405,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
