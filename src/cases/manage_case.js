@@ -99,7 +99,7 @@ export default async function handler(req, res) {
       let actions = [];
       let status_changes = {};
 
-      if (file_url !== undefined && file_url !== oldData.photo && is_cover === undefined) {
+      if (file_url !== undefined && file_url !== oldData.photo) {
         actions.push('change photo');
         status_changes.photo = { old_value: oldData.photo, new_value: file_url };
       }
@@ -131,8 +131,9 @@ export default async function handler(req, res) {
         );
       }
 
-      // ถ้ามี auto reason ให้ใช้ก่อน ถ้าไม่มีค่อย fallback ไปใช้ description จาก frontend
-      const autoReason = autoReasons.length > 0 ? autoReasons.join(', ') : (description || null);
+      // ถ้า frontend ส่ง description มา ให้ใช้ก่อนเสมอ (เช่น กรณีเปลี่ยนไฟล์แนบ)
+      // ถ้าไม่มีค่อย fallback ไปใช้ auto reason จาก action (cover/hidden)
+      const autoReason = description || (autoReasons.length > 0 ? autoReasons.join(', ') : null);
 
       // 4. External Log
       await sendExternalLog({
