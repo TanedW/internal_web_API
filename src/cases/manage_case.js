@@ -121,13 +121,13 @@ export default async function handler(req, res) {
       const autoReasons = [];
 
       if (is_cover !== undefined && is_cover !== oldData.is_cover) {
-        autoReasons.push(`ADMIN เปลี่ยนรูปหน้าปก (ID: ${photo_id})`);
+        autoReasons.push(`${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''} เปลี่ยนรูปหน้าปก (ID: ${photo_id})`.trim());
       }
       if (is_hidden !== undefined && is_hidden !== oldData.is_hidden) {
         autoReasons.push(
           is_hidden
-            ? `ADMIN ซ่อนรูป (ID: ${photo_id})`
-            : `ADMIN แสดงรูป (ID: ${photo_id})`
+            ? `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''} ซ่อนรูป (ID: ${photo_id})`.trim()
+            : `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''} แสดงรูป (ID: ${photo_id})`.trim()
         );
       }
 
