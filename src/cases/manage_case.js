@@ -99,7 +99,7 @@ export default async function handler(req, res) {
       let actions = [];
       let status_changes = {};
 
-      if (file_url !== undefined && file_url !== oldData.photo) {
+      if (file_url !== undefined && file_url !== oldData.photo && is_cover === undefined) {
         actions.push('change photo');
         status_changes.photo = { old_value: oldData.photo, new_value: file_url };
       }
