@@ -44,7 +44,7 @@ export default async function handler(req, res) {
         viewed,      
         is_hidden, 
         is_cover,
-        description // 🟢 1. รับค่าเหตุผลการแก้ไข (description) จาก Frontend
+        description // รับค่าเหตุผลจาก Frontend มาใช้งาน
       } = req.body;
 
       if (!current_admin_id || !photo_id) {
@@ -109,7 +109,6 @@ export default async function handler(req, res) {
       }
       if (is_hidden !== undefined && is_hidden !== oldData.is_hidden) {
         actions.push('change hidden status');
-        // 🟢 ปรับโครงสร้าง key ย่อยให้เป็น old_value และ new_value เหมือนกันทุกอันเพื่อให้ Frontend แกะง่าย
         status_changes.is_hidden = { old_value: oldData.is_hidden, new_value: is_hidden };
       }
       if (is_cover !== undefined && is_cover !== oldData.is_cover) {
@@ -117,7 +116,7 @@ export default async function handler(req, res) {
         status_changes.is_cover = { old_value: oldData.is_cover, new_value: is_cover };
       }
 
-      // 4. External Log (ส่งข้อมูลเข้าสู่ตารางฐานข้อมูลกลาง)
+      // 4. External Log (ผูกค่า reason: description สำหรับกรณีเปลี่ยน cover และ hidden ด้วยแล้ว)
       await sendExternalLog({
         actor_id: String(actorAdmin.admin_id),
         actor_type: "ADMIN",
@@ -125,16 +124,15 @@ export default async function handler(req, res) {
         source_channel: "Internal Portal",
         target_id: String(oldData.ticket_id),
         action: 'CASE_UPDATE_INFO',
-        reason: description || null, // 🟢 2. เพิ่มฟิลด์ reason ระดับบนสุด (สอดคล้องกับหน้า manage-org)
+        reason: description || null, // 🟢 แนบเหตุผล (reason) ให้ครอบคลุมทุก Action รวมถึงตั้งค่ารูปภาพปก (Cover)
         payload: {
           attachment_id: photo_id,
           actions_performed: actions,
           status_changes: status_changes,
           updated_data: updatedAttachment[0],
-          description: description || null, // 🟢 3. คงค่า description ไว้ใน payload เพื่อความปลอดภัย
+          description: description || null, 
           context_info: {
             note: oldData.note,
-            // 🟢 4. แนบรูปภาพพิกัดเดิม/ใหม่เข้าไปเสริมในกรณีซ่อนภาพหรือปรับหน้าปก
             photo_url: updatedAttachment[0].photo 
           }
         },
@@ -152,7 +150,7 @@ export default async function handler(req, res) {
           photo_id, 
           action: actions.join(", "), 
           status_changes,
-          reason: description || null // 🟢 5. แนบเข้า Internal Log ด้วย
+          reason: description || null
         }
       });
 
