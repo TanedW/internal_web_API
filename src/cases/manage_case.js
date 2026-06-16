@@ -116,7 +116,25 @@ export default async function handler(req, res) {
         status_changes.is_cover = { old_value: oldData.is_cover, new_value: is_cover };
       }
 
-      // 4. External Log (ผูกค่า reason: description สำหรับกรณีเปลี่ยน cover และ hidden ด้วยแล้ว)
+      // --- Auto-generate reason based on action ---
+      // รวม reason หลาย action ในครั้งเดียว (กรณีส่งมาพร้อมกัน)
+      const autoReasons = [];
+
+      if (is_cover !== undefined && is_cover !== oldData.is_cover) {
+        autoReasons.push(`ADMIN เปลี่ยนรูปหน้าปก (ID: ${photo_id})`);
+      }
+      if (is_hidden !== undefined && is_hidden !== oldData.is_hidden) {
+        autoReasons.push(
+          is_hidden
+            ? `ADMIN ซ่อนรูป (ID: ${photo_id})`
+            : `ADMIN แสดงรูป (ID: ${photo_id})`
+        );
+      }
+
+      // ถ้ามี auto reason ให้ใช้ก่อน ถ้าไม่มีค่อย fallback ไปใช้ description จาก frontend
+      const autoReason = autoReasons.length > 0 ? autoReasons.join(', ') : (description || null);
+
+      // 4. External Log
       await sendExternalLog({
         actor_id: String(actorAdmin.admin_id),
         actor_type: "ADMIN",
@@ -124,13 +142,13 @@ export default async function handler(req, res) {
         source_channel: "Internal Portal",
         target_id: String(oldData.ticket_id),
         action: 'CASE_UPDATE_INFO',
-        reason: description || null, // 🟢 แนบเหตุผล (reason) ให้ครอบคลุมทุก Action รวมถึงตั้งค่ารูปภาพปก (Cover)
+        reason: autoReason, // 🟢 auto-reason สำหรับ cover/hidden, fallback ไป description สำหรับ action อื่น
         payload: {
           attachment_id: photo_id,
           actions_performed: actions,
           status_changes: status_changes,
           updated_data: updatedAttachment[0],
-          description: description || null, 
+          description: autoReason,
           context_info: {
             note: oldData.note,
             photo_url: updatedAttachment[0].photo 
@@ -150,7 +168,7 @@ export default async function handler(req, res) {
           photo_id, 
           action: actions.join(", "), 
           status_changes,
-          reason: description || null
+          reason: autoReason
         }
       });
 
