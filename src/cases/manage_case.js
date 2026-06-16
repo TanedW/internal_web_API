@@ -41,9 +41,10 @@ export default async function handler(req, res) {
         current_admin_id, 
         photo_id, 
         file_url, 
-        viewed,      // รับค่าจาก Frontend
+        viewed,      
         is_hidden, 
-        is_cover 
+        is_cover,
+        description // 🟢 1. รับค่าเหตุผลการแก้ไข (description) จาก Frontend
       } = req.body;
 
       if (!current_admin_id || !photo_id) {
@@ -76,8 +77,7 @@ export default async function handler(req, res) {
         `, [case_id]);
       }
 
-      // 3. UPDATE: รวม viewed เข้าไปด้วย
-      // ใช้ COALESCE เพื่อให้ถ้า Frontend ไม่ส่งค่ามา ให้ใช้ค่าเดิมใน DB
+      // 3. UPDATE ข้อมูลลง Database
       const { rows: updatedAttachment } = await query(`
         UPDATE voice_attachment
         SET 
@@ -85,7 +85,6 @@ export default async function handler(req, res) {
           viewed = COALESCE($2, viewed),
           is_hidden = COALESCE($3, is_hidden),
           is_cover = COALESCE($4, is_cover)
-          /* updated_on ไม่ถูกระบุที่นี่ เพื่อคงค่าเดิมไว้ */
         WHERE id = $5
         RETURNING id, photo, viewed, is_hidden, is_cover, note, updated_on;
       `, [
@@ -96,7 +95,7 @@ export default async function handler(req, res) {
         photo_id
       ]);
 
-      // --- Identify Changes for Logging (Similar to manage_org.js) ---
+      // --- Identify Changes for Logging ---
       let actions = [];
       let status_changes = {};
 
@@ -110,6 +109,7 @@ export default async function handler(req, res) {
       }
       if (is_hidden !== undefined && is_hidden !== oldData.is_hidden) {
         actions.push('change hidden status');
+        // 🟢 ปรับโครงสร้าง key ย่อยให้เป็น old_value และ new_value เหมือนกันทุกอันเพื่อให้ Frontend แกะง่าย
         status_changes.is_hidden = { old_value: oldData.is_hidden, new_value: is_hidden };
       }
       if (is_cover !== undefined && is_cover !== oldData.is_cover) {
@@ -117,7 +117,7 @@ export default async function handler(req, res) {
         status_changes.is_cover = { old_value: oldData.is_cover, new_value: is_cover };
       }
 
-      // 4. External Log
+      // 4. External Log (ส่งข้อมูลเข้าสู่ตารางฐานข้อมูลกลาง)
       await sendExternalLog({
         actor_id: String(actorAdmin.admin_id),
         actor_type: "ADMIN",
@@ -125,13 +125,17 @@ export default async function handler(req, res) {
         source_channel: "Internal Portal",
         target_id: String(oldData.ticket_id),
         action: 'CASE_UPDATE_INFO',
+        reason: description || null, // 🟢 2. เพิ่มฟิลด์ reason ระดับบนสุด (สอดคล้องกับหน้า manage-org)
         payload: {
           attachment_id: photo_id,
           actions_performed: actions,
           status_changes: status_changes,
           updated_data: updatedAttachment[0],
+          description: description || null, // 🟢 3. คงค่า description ไว้ใน payload เพื่อความปลอดภัย
           context_info: {
-            note: oldData.note
+            note: oldData.note,
+            // 🟢 4. แนบรูปภาพพิกัดเดิม/ใหม่เข้าไปเสริมในกรณีซ่อนภาพหรือปรับหน้าปก
+            photo_url: updatedAttachment[0].photo 
           }
         },
         client_ip: ipAddress,
@@ -147,7 +151,8 @@ export default async function handler(req, res) {
           case_id, 
           photo_id, 
           action: actions.join(", "), 
-          status_changes 
+          status_changes,
+          reason: description || null // 🟢 5. แนบเข้า Internal Log ด้วย
         }
       });
 
