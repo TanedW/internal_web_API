@@ -96,24 +96,42 @@ export default async function handler(req, res) {
         photo_id
       ]);
 
-      // 4. Log ข้อมูลทั้งหมด (รวมถึงค่าที่ไม่ได้เปลี่ยนอย่าง Note)
+      // --- Identify Changes for Logging (Similar to manage_org.js) ---
+      let actions = [];
+      let status_changes = {};
+
+      if (file_url !== undefined && file_url !== oldData.photo) {
+        actions.push('change photo');
+        status_changes.photo = { old_value: oldData.photo, new_value: file_url };
+      }
+      if (viewed !== undefined && viewed !== oldData.viewed) {
+        actions.push('change viewed status');
+        status_changes.viewed = { old_value: oldData.viewed, new_value: viewed };
+      }
+      if (is_hidden !== undefined && is_hidden !== oldData.is_hidden) {
+        actions.push('change hidden status');
+        status_changes.is_hidden = { old_value: oldData.is_hidden, new_value: is_hidden };
+      }
+      if (is_cover !== undefined && is_cover !== oldData.is_cover) {
+        actions.push('change cover status');
+        status_changes.is_cover = { old_value: oldData.is_cover, new_value: is_cover };
+      }
+
+      // 4. External Log
       await sendExternalLog({
         actor_id: String(actorAdmin.admin_id),
         actor_type: "ADMIN",
-        actor_name: `${actorAdmin.first_name} ${actorAdmin.last_name}`,
+        actor_name: `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''}`.trim(),
         source_channel: "Internal Portal",
         target_id: String(oldData.ticket_id),
-        action: 'UPDATE_ATTACHMENT_FULL_PROPERTIES',
+        action: 'UPDATE_ATTACHMENT',
         payload: {
           attachment_id: photo_id,
-          changes: {
-            photo: { old: oldData.photo, new: file_url || oldData.photo },
-            viewed: { old: oldData.viewed, new: viewed !== undefined ? viewed : oldData.viewed },
-            is_hidden: { old: oldData.is_hidden, new: is_hidden !== undefined ? is_hidden : oldData.is_hidden },
-            is_cover: { old: oldData.is_cover, new: is_cover !== undefined ? is_cover : oldData.is_cover }
-          },
+          actions_performed: actions,
+          status_changes: status_changes,
+          updated_data: updatedAttachment[0],
           context_info: {
-            note: oldData.note // ส่ง Note เข้า Log ตามความต้องการ
+            note: oldData.note
           }
         },
         client_ip: ipAddress,
@@ -125,7 +143,12 @@ export default async function handler(req, res) {
         adminId: actorAdmin.admin_id, email: actorAdmin.email,
         first_name: actorAdmin.first_name, last_name: actorAdmin.last_name,
         action_type: 'UPDATE_ATTACHMENT', status: 'SUCCESS', ipAddress, userAgent,
-        details: { case_id, photo_id, updated: { file_url, viewed, is_hidden, is_cover } }
+        details: { 
+          case_id, 
+          photo_id, 
+          action: actions.join(", "), 
+          status_changes 
+        }
       });
 
       return res.status(200).json({ success: true, data: updatedAttachment[0] });
