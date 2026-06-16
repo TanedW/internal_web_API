@@ -124,7 +124,7 @@ export default async function handler(req, res) {
         actor_name: `${actorAdmin.first_name || ''} ${actorAdmin.last_name || ''}`.trim(),
         source_channel: "Internal Portal",
         target_id: String(oldData.ticket_id),
-        action: 'UPDATE_ATTACHMENT',
+        action: 'UPDATE_CASE_ATTACHMENT',
         payload: {
           attachment_id: photo_id,
           actions_performed: actions,
