@@ -447,7 +447,7 @@ export default async function handler(req, res) {
         String(actorAdmin.admin_id),
         "delete",
         {
-          type: "Admin_Users",
+          type: "Admin_user",
           tenant: "default"
         }
       );
