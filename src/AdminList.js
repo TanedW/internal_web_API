@@ -56,7 +56,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const [canDelete, dbResult] = await Promise.all([
         requester_id
-          ? permit.check(String(requester_id), "delete", { type: "Admin_user", tenant: "default" }).catch(() => false)
+          ? permit.check(String(requester_id), "delete", { type: "Admin_Users", tenant: "default" }).catch(() => false)
           : Promise.resolve(false),
         db.query(`SELECT admin_id, email, first_name, last_name, profile_url FROM admin_system WHERE is_deleted = false ORDER BY join_at DESC;`)
       ]);
@@ -318,7 +318,7 @@ export default async function handler(req, res) {
         String(current_admin_id),
         "update",
         {
-          type: "Admin_user",
+          type: "Admin_Users",
           tenant: "default"
         }
       );
@@ -447,7 +447,7 @@ export default async function handler(req, res) {
         String(actorAdmin.admin_id),
         "delete",
         {
-          type: "Admin_user",
+          type: "Admin_Users",
           tenant: "default"
         }
       );
